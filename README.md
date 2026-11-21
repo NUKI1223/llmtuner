@@ -31,8 +31,10 @@ The run ids 1 and 2 assume a fresh store; `llmtuner runs` shows the real ids.
 To get an `llmtuner` command everywhere:
 
 ```bash
-uv tool install --editable /path/to/LLMtuner
+uv tool install --managed-python --python 3.12 --editable '/path/to/LLMtuner[mcp]'
 ```
+
+The install is editable, so code changes take effect at once. `--managed-python` builds the tool on a Python that uv owns, so upgrading the system or mise Python does not break it.
 
 ## How a project connects
 
@@ -190,19 +192,19 @@ The gate is a tripwire for large regressions. With few cases it cannot see small
 
 ## How an agent connects
 
-`llmtuner mcp` starts an MCP server on stdio. It needs the `mcp` package (version 2), which the rest of llmtuner does not. This command fetches it on the fly and leaves the project folder untouched:
+`llmtuner mcp` starts an MCP server on stdio. It needs the `mcp` package (version 2), which the rest of llmtuner does not; the install above includes it. Give the command to the agent as an stdio MCP server, with the full path, because an agent's app may start servers with a shorter `PATH`. In Claude Code, from the project folder:
+
+```bash
+claude mcp add llmtuner -s local -- ~/.local/bin/llmtuner mcp
+```
+
+Without the install, this fetches `mcp` on the fly and leaves the project folder untouched:
 
 ```bash
 uv run --no-project --with 'mcp>=2,<3' --with-editable /path/to/LLMtuner llmtuner mcp
 ```
 
-Give that command to the agent as an stdio MCP server. In Claude Code:
-
-```bash
-claude mcp add llmtuner -- uv run --no-project --with 'mcp>=2,<3' --with-editable /path/to/LLMtuner llmtuner mcp
-```
-
-Under this command, `python3` inside a target resolves to uv's temporary environment, not your project's. If a target needs your project's packages, name its interpreter in the target command, for example `[".venv/bin/python", "answer.py"]`.
+A target's `python3` is whatever `python3` is on the `PATH` (under `uv run`, uv's temporary environment), not your project's. If a target needs your project's packages, name its interpreter in the target command, for example `[".venv/bin/python", "answer.py"]`.
 
 The agent gets seven tools: `describe_project`, `run_eval`, `get_report`, `compare_runs`, `check_gate`, `list_runs` and `show_cases`.
 
@@ -213,13 +215,16 @@ Two things are left out on purpose. Tools take the *name* of a target from the p
 ## Tests
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
+scripts/test.sh 3.12 with-mcp
+scripts/test.sh 3.15 no-mcp
 ```
 
-All tests run offline against stub scripts. The MCP test is skipped unless `mcp` is installed; to include it:
+All tests run offline against stub scripts, in a fresh uv environment with an empty store and no API key. Without `mcp` the MCP tests are skipped, and the script checks the skip count, so a leg that silently stops testing MCP fails. GitHub Actions runs the four legs (Python 3.12 and 3.15, with and without `mcp`) on every push; see `.github/workflows/tests.yml`.
+
+For a quick run with whatever Python is at hand:
 
 ```bash
-PYTHONPATH=src uv run --no-project --with 'mcp>=2,<3' python -m unittest discover -s tests
+PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
 ## Not in this version

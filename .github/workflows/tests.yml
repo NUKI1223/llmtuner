@@ -1,0 +1,23 @@
+name: tests
+
+# No secrets are used here on purpose: tests must never be able to make a paid model call.
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.15"]
+        mcp: [with-mcp, no-mcp]
+    name: python ${{ matrix.python }}, ${{ matrix.mcp }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
+      - run: scripts/test.sh "${{ matrix.python }}" "${{ matrix.mcp }}"
