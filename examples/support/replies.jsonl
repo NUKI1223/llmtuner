@@ -1,0 +1,5 @@
+{"id": "r01", "split": "test", "input": "This is the third time I'm writing. My refund still hasn't arrived and nobody answers. Are you a real shop or a scam?"}
+{"id": "r02", "split": "test", "input": "Hi, the tent I ordered is missing one pole. Can you send a replacement?"}
+{"id": "r03", "split": "test", "input": "I was charged twice for my helmet. Please fix it."}
+{"id": "r04", "split": "test", "input": "Your courier left my bike in the rain and now the chain is rusty. This is unacceptable."}
+{"id": "r05", "split": "test", "input": "Do you ship to Iceland, and how long does it take?"}

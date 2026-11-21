@@ -1,0 +1,74 @@
+# Example project: a support assistant for a bike and camping shop.
+# Run from this folder:  llmtuner run triage-v1 tickets --set-baseline
+
+project = "support-demo"
+
+# A target is any command that reads one input on stdin and prints its answer.
+# These two are rule-based stand-ins, so they run offline and for free.
+[targets.triage-v1]
+command = ["python3", "triage.py", "v1"]
+model = "rules-v1"
+timeout = 10
+
+[targets.triage-v2]
+command = ["python3", "triage.py", "v2"]
+model = "rules-v2"
+timeout = 10
+
+# Real models through OpenRouter. Each case is one paid API call.
+# The key is read from OPENROUTER_API_KEY or a .env file, never from this file.
+# "{python}" is the Python that runs llmtuner, so the adapter is always importable.
+[targets.nemo]
+command = ["{python}", "-m", "llmtuner.adapters.openrouter", "--model", "mistralai/mistral-nemo",
+           "--system-file", "triage_prompt.txt", "--max-tokens", "16"]
+model = "mistralai/mistral-nemo"
+timeout = 120
+
+[targets.llama-8b]
+command = ["{python}", "-m", "llmtuner.adapters.openrouter", "--model", "meta-llama/llama-3.1-8b-instruct",
+           "--system-file", "triage_prompt.txt", "--max-tokens", "16"]
+model = "meta-llama/llama-3.1-8b-instruct"
+timeout = 120
+
+# The same model writing a full reply, graded by a judge (see below).
+[targets.reply-nemo]
+command = ["{python}", "-m", "llmtuner.adapters.openrouter", "--model", "mistralai/mistral-nemo",
+           "--system-file", "reply_prompt.txt", "--max-tokens", "200"]
+model = "mistralai/mistral-nemo"
+timeout = 120
+
+# An agent CLI works the same way. Name the model explicitly, or the run will
+# not say which one answered:
+#   command = ["claude", "-p", "--model", "haiku", "Reply with one word: ..."]
+
+[datasets.tickets]
+path = "tickets.jsonl"
+graders = ["category", "one_word"]
+
+[datasets.replies]
+path = "replies.jsonl"
+graders = ["short", "polite"]
+
+# Code graders: free and exact.
+[graders.category]
+type = "exact"
+
+[graders.one_word]
+type = "max_words"
+limit = 1
+required = false  # reported, but does not decide pass or fail
+
+[graders.short]
+type = "max_words"
+limit = 80
+
+# A judge grader asks a model one yes/no question. It uses a different model
+# family from the one being graded, because judges favour their own style.
+# Check it against your own labels (llmtuner label --grader polite) before
+# trusting its numbers.
+[graders.polite]
+type = "judge"
+command = ["{python}", "-m", "llmtuner.adapters.openrouter", "--model", "meta-llama/llama-3.1-8b-instruct",
+           "--max-tokens", "80"]
+question = "Is the reply rude or dismissive toward the customer?"
+fail_on = "yes"

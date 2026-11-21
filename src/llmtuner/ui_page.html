@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="llmtuner-token" content="__TOKEN__">
+<title>llmtuner</title>
+<style nonce="__NONCE__">
+:root {
+  color-scheme: light dark;
+  --bg: #f5f5f2; --surface: #ffffff; --ink: #1b1c1a; --muted: #5d5e58; --line: #dddcd5;
+  --accent: #2456b8; --accent-ink: #ffffff; --soft: #e9eefa;
+  --fail: #a3201f; --fail-bg: #fbeceb; --warn-bg: #fff3d1; --warn-ink: #5e4200; --warn-line: #e2c36b;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141514; --surface: #1d1e1c; --ink: #ecece7; --muted: #a3a39a; --line: #353631;
+    --accent: #8cb1f4; --accent-ink: #0e1a30; --soft: #1e2a44;
+    --fail: #f2a7a1; --fail-bg: #3b2121; --warn-bg: #3a3115; --warn-ink: #f1d98e; --warn-line: #6e5a1f;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--sans); overflow-wrap: break-word; }
+a { color: var(--accent); }
+h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .25rem; font-weight: 650; }
+h2 { font-size: 1.1rem; margin: 2rem 0 .75rem; font-weight: 650; }
+h1:focus { outline: none; }
+p { margin: .5rem 0; }
+.num, td.num, th.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: .875rem; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 0 16px 4rem; }
+header.top { border-bottom: 1px solid var(--line); background: var(--surface); }
+header.top .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem 1.5rem; padding-top: .75rem; padding-bottom: .75rem; }
+.brand { font-weight: 700; letter-spacing: .01em; }
+nav { display: flex; gap: 1rem; }
+nav a { color: var(--ink); text-decoration: none; padding: .25rem 0; border-bottom: 2px solid transparent; }
+nav a[aria-current="page"] { border-bottom-color: var(--accent); }
+main { padding-top: 2rem; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+button, select, input[type=text] { font: inherit; color: inherit; }
+button { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .5rem .9rem; cursor: pointer; min-height: 2.5rem; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.linklike { background: none; border: none; padding: 0; min-height: 0; color: var(--accent); text-decoration: underline; }
+button[aria-pressed="true"] { background: var(--soft); border-color: var(--accent); }
+select, input[type=text] { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .45rem .6rem; min-height: 2.5rem; max-width: 100%; }
+.row { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin: 1rem 0; }
+.row.tight { margin: .5rem 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; }
+.empty { text-align: left; }
+.empty h2 { margin-top: 0; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+pre.cmd { font-family: var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .75rem 1rem; overflow-x: auto; margin: .75rem 0; white-space: pre-wrap; }
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+th, td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-weight: 600; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; }
+tr.click { cursor: pointer; }
+tr.click:hover { background: var(--soft); }
+.pill { display: inline-block; font-size: .78rem; padding: .05rem .5rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); white-space: nowrap; }
+.pill.accent { border-color: var(--accent); color: var(--accent); }
+.pill.fail { border-color: var(--fail); color: var(--fail); background: var(--fail-bg); }
+.fail { color: var(--fail); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr)); gap: 1rem; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .4rem; min-width: 0; }
+.tile .label { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.tile .value { font-size: 2.1rem; line-height: 1.1; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .value.none { font-size: 1.4rem; color: var(--muted); }
+.tile .reading { color: var(--ink); }
+.tile .sub { color: var(--muted); font-size: .875rem; }
+.tile.unmeasured { border-style: dashed; }
+.ci { position: relative; display: inline-block; width: 120px; height: 16px; vertical-align: middle; }
+.ci.wide { display: block; width: 100%; min-width: 160px; }
+.ci-axis { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line); }
+.ci-line { position: absolute; top: 50%; height: 2px; margin-top: -1px; background: var(--accent); }
+.ci-dot { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); box-sizing: content-box; }
+.axis-head { display: flex; justify-content: space-between; font-weight: 400; text-transform: none; letter-spacing: 0; }
+dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 1rem 0; }
+dl.meta dt { color: var(--muted); }
+dl.meta dd { margin: 0; min-width: 0; }
+.alert { border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: .75rem 1rem; margin: 1rem 0; }
+.alert.error { border-color: var(--fail); background: var(--fail-bg); color: var(--fail); }
+.verdict { font-size: 1.25rem; font-weight: 600; margin: 1rem 0; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.text.mono { font-family: var(--mono); font-size: .9rem; }
+.clip.clamped { max-height: 11em; overflow: hidden; position: relative; }
+.field { margin: .9rem 0; }
+.field > .name { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; margin-bottom: .25rem; }
+.box { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; }
+.case { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin: .6rem 0; }
+.case > button.head { width: 100%; text-align: left; border: none; background: none; display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; border-radius: 12px; padding: .7rem 1rem; }
+.case .body { padding: 0 1rem 1rem; border-top: 1px solid var(--line); }
+.result { font-weight: 600; white-space: nowrap; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 1rem; }
+.cols > div { min-width: 0; }
+.list { display: flex; flex-wrap: wrap; gap: .5rem; }
+.label-card { padding: 1.5rem; }
+.question { font-size: 1.3rem; font-weight: 600; margin: 0 0 1rem; }
+.label-card .output .text { font-size: 1.1rem; line-height: 1.55; }
+.verdict-buttons { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.25rem 0 .75rem; }
+.verdict-buttons button { min-height: 3.25rem; min-width: 7.5rem; font-size: 1.1rem; font-weight: 600; flex: 1 1 7.5rem; }
+kbd { font-family: var(--mono); font-size: .8em; border: 1px solid var(--line); border-radius: 4px; padding: 0 .3em; margin-left: .35em; }
+progress { width: 100%; height: .6rem; accent-color: var(--accent); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 480px) {
+  h1 { font-size: 1.35rem; }
+  .tile .value { font-size: 1.8rem; }
+  dl.meta { grid-template-columns: 1fr; gap: 0; }
+  dl.meta dd { margin-bottom: .5rem; }
+}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <span class="brand">llmtuner</span>
+  <nav aria-label="Main">
+    <a href="#/runs" id="nav-runs">Runs</a>
+    <a href="#/rank" id="nav-rank">Ranking</a>
+  </nav>
+</div></header>
+<div class="wrap"><main id="app" aria-live="polite"><noscript>This page needs JavaScript to show your runs.</noscript></main></div>
+<script nonce="__NONCE__">
+"use strict";
+(function () {
+  var TOKEN = document.querySelector('meta[name="llmtuner-token"]').getAttribute("content");
+  var app = document.getElementById("app");
+  var navId = 0;       // bumped on every route change; async work started under an older value is dropped
+  var cleanups = [];   // run (and emptied) by the router before any new route is rendered
+
+  // ---------- small DOM helper: text only ever goes in through text nodes ----------
+  function h(tag, props) {
+    var el = document.createElement(tag);
+    props = props || {};
+    Object.keys(props).forEach(function (k) {
+      var v = props[k];
+      if (v === null || v === undefined || v === false) return;
+      if (k === "class") el.className = v;
+      else if (k === "text") el.appendChild(document.createTextNode(String(v)));
+      else if (k === "on") Object.keys(v).forEach(function (ev) { el.addEventListener(ev, v[ev]); });
+      else el.setAttribute(k, v === true ? "" : String(v));
+    });
+    for (var i = 2; i < arguments.length; i++) add(el, arguments[i]);
+    return el;
+  }
+  function add(el, kid) {
+    if (kid === null || kid === undefined || kid === false) return;
+    if (Array.isArray(kid)) { kid.forEach(function (k) { add(el, k); }); return; }
+    el.appendChild(typeof kid === "object" ? kid : document.createTextNode(String(kid)));
+  }
+  function mount() {
+    // Go through add() so a view may pass nested arrays of nodes, as h() allows.
+    var fragment = document.createDocumentFragment();
+    for (var i = 0; i < arguments.length; i++) add(fragment, arguments[i]);
+    app.replaceChildren(fragment);
+  }
+
+  // ---------- formatting (display only; every number comes from the API) ----------
+  function pct(v) { return v === null || v === undefined ? "n/a" : (v * 100).toFixed(1) + "%"; }
+  function range(r) { return r && r.low !== null ? pct(r.low) + " to " + pct(r.high) : "n/a"; }
+  function points(v) { return v === null || v === undefined ? "n/a" : (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + " points"; }
+  function cost(v, unit) {
+    if (typeof v !== "number") return "not reported";
+    var shown = Number(v.toFixed(6));
+    // A tiny positive cost must not round to a misleading 0.
+    var text = (shown === 0 && v !== 0) ? v.toExponential(2) : String(shown);
+    return text + (unit ? " " + unit : "");
+  }
+  function unitsText(units) { return "different units (" + (units || []).join(", ") + ")"; }
+  // u is a usage object (or a ranking/run row); an older server may lack the unit fields.
+  function costOf(u, v) {
+    if (u && u.mixed_units === true) return unitsText(u.cost_units);
+    return cost(v, u && u.cost_unit);
+  }
+  function tokens(v) { return typeof v === "number" ? Math.round(v).toLocaleString() : "not reported"; }
+  function when(ts) {
+    if (!ts) return "n/a";
+    // Short and unbreakable, so the column stays one line: "12 Nov, 21:35".
+    return new Date(ts * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).replace(/ /g, " ");
+  }
+  function secs(v) { return v === null || v === undefined ? "n/a" : v.toFixed(1) + " s"; }
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")); }
+  // Repeated trials: a row or report is a group when it says so; an older server omits the fields.
+  function trialCount(r) { return r && typeof r.trials === "number" && r.trials > 0 ? r.trials : 1; }
+  function plannedTrials(tr) { return typeof tr.planned === "number" && tr.planned > 0 ? tr.planned : tr.runs.length; }
+  // k is the number of trials that FINISHED; planned is how many were asked for. An unfinished group
+  // is never labelled with the planned number: "all 1 finished trial (5 planned)".
+  function trialsPhrase(k, planned) {
+    var late = planned > k;
+    return k + (late ? " finished" : "") + (k === 1 ? " trial" : " trials") + (late ? " (" + planned + " planned)" : "");
+  }
+  // Same wording as the command line: "the 1 finished trial (5 planned)", "all 3 trials".
+  function allTrials(k, planned) {
+    if (k === 1) return planned > 1 ? "passed the " + trialsPhrase(k, planned) : "passed its only trial";
+    return "passed all " + trialsPhrase(k, planned);
+  }
+  function upFirst(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+  function remember(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* storage may be off */ } }
+  function recall(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+
+  // ---------- API ----------
+  function ApiError(status, message) { this.status = status; this.message = message; }
+  function request(path, options) {
+    return fetch(path, options).then(function (res) {
+      return res.json().then(function (body) {
+        if (!res.ok) throw new ApiError(res.status, (body && body.error) || "request failed");
+        return body;
+      }, function () { throw new ApiError(res.status, "the server sent something that is not JSON"); });
+    }, function () {
+      throw new ApiError(0, "Cannot reach the llmtuner server. Is llmtuner ui still running in your terminal?");
+    });
+  }
+  function get(path) { return request(path); }
+  function post(path, body) {
+    return request(path, { method: "POST", headers: { "Content-Type": "application/json", "X-LLMTuner-Token": TOKEN }, body: JSON.stringify(body) });
+  }
+  function q(obj) {
+    return Object.keys(obj).filter(function (k) { return obj[k] !== null && obj[k] !== undefined && obj[k] !== ""; })
+      .map(function (k) { return encodeURIComponent(k) + "=" + encodeURIComponent(obj[k]); }).join("&");
+  }
+
+  // ---------- shared pieces ----------
+  function ci(rate, wide) {
+    if (!rate || rate.point === null) return h("span", { class: "muted", text: "no cases" });
+    var label = pct(rate.point) + ", 95% interval " + range(rate);
+    var line = h("span", { class: "ci-line" });
+    var dot = h("span", { class: "ci-dot" });
+    line.style.left = (rate.low * 100) + "%";
+    line.style.width = ((rate.high - rate.low) * 100) + "%";
+    dot.style.left = (rate.point * 100) + "%";
+    return h("span", { class: "ci" + (wide ? " wide" : ""), role: "img", "aria-label": label, title: label },
+      h("span", { class: "ci-axis" }), line, dot);
+  }
+
+  function textBlock(text, opts) {
+    opts = opts || {};
+    var max = opts.max || 800;
+    if (text === null || text === undefined || text === "") return h("p", { class: "muted small", text: "(empty)" });
+    var body = h("div", { class: "text" + (opts.mono ? " mono" : ""), text: text });
+    var lines = text.split("\n").length;
+    if (text.length <= max && lines <= 12) return h("div", { class: "box" }, body);
+    var clip = h("div", { class: "clip clamped" }, body);
+    var btn = h("button", { type: "button", class: "linklike small", "aria-expanded": "false", text: "Show all (" + text.length.toLocaleString() + " characters)" });
+    btn.addEventListener("click", function () {
+      var open = clip.classList.toggle("clamped") === false;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.textContent = open ? "Collapse" : "Show all (" + text.length.toLocaleString() + " characters)";
+    });
+    return h("div", { class: "box" }, clip, h("div", null, btn));
+  }
+
+  function field(name, node, cutLength, maxText) {
+    return h("div", { class: "field" }, h("div", { class: "name", text: name }), node,
+      cutLength ? h("p", { class: "small muted", text: "Cut: showing the first " + maxText.toLocaleString() + " of " + cutLength.toLocaleString() + " characters." }) : null);
+  }
+
+  function resultMark(passed, error) {
+    if (error) return h("span", { class: "result fail", text: "⚠ Error" });
+    return passed ? h("span", { class: "result", text: "✓ Pass" }) : h("span", { class: "result fail", text: "✗ Fail" });
+  }
+
+  function tile(opts) {
+    return h("div", { class: "tile" + (opts.unmeasured ? " unmeasured" : "") },
+      h("div", { class: "label", text: opts.label }),
+      h("div", { class: "value" + (opts.unmeasured ? " none" : ""), text: opts.value }),
+      h("div", { class: "reading", text: opts.reading }),
+      opts.extra || null,
+      opts.sub ? h("div", { class: "sub", text: opts.sub }) : null);
+  }
+
+  function emptyCard(title, kids) {
+    return h("div", { class: "card empty" }, h("h2", { text: title }), kids);
+  }
+
+  function pageTitle(text) { return h("h1", { text: text, tabindex: "-1", id: "title" }); }
+
+  function projectPicker(projects, current, onChange) {
+    var sel = h("select", { id: "project", "aria-label": "Project" });
+    projects.forEach(function (p) { sel.appendChild(h("option", { value: p.project, text: p.project })); });
+    sel.value = current;
+    sel.addEventListener("change", function () { onChange(sel.value); });
+    return h("label", { class: "row tight" }, h("span", { class: "muted", text: "Project" }), sel);
+  }
+
+  var RUN_COMMAND = "cd your-project\nllmtuner run TARGET DATASET";
+
+  // ---------- Runs ----------
+  function viewRuns(params, ctx) {
+    return get("/api/projects").then(ctx.live(function (data) {
+      var projects = data.projects;
+      if (!projects.length) {
+        return mount(pageTitle("Runs"), emptyCard("No runs yet", [
+          h("p", { text: "Nothing has been recorded in this store. In a folder with an llmtuner.toml, run a target on a dataset:" }),
+          h("pre", { class: "cmd", text: RUN_COMMAND }),
+          h("p", { class: "muted", text: "Reload this page afterwards. Projects appear here as soon as they have a run." })]));
+      }
+      var names = projects.map(function (p) { return p.project; });
+      var project = params.get("project") || recall("project");
+      if (names.indexOf(project) < 0) project = names[0];
+      remember("project", project);
+      return get("/api/runs?" + q({ project: project, limit: 100 })).then(ctx.live(function (res) {
+        var picked = [];
+        var compareBtn = h("button", { type: "button", class: "primary", disabled: true, text: "Compare two runs" });
+        compareBtn.addEventListener("click", function () {
+          var ids = picked.slice().sort(function (a, b) { return a - b; });
+          location.hash = "#/compare/" + ids[0] + "/" + ids[1];
+        });
+        var hint = h("span", { class: "muted small", text: "Tick two runs. The older one is the baseline." });
+        function sync() { compareBtn.disabled = picked.length !== 2; }
+        var boxes = {};
+        var rows = res.runs.map(function (r) {
+          var cb = h("input", { type: "checkbox", "aria-label": "Select run " + r.id + " for comparison" });
+          boxes[r.id] = cb;
+          cb.addEventListener("change", function () {
+            if (cb.checked) { picked.push(r.id); if (picked.length > 2) { boxes[picked.shift()].checked = false; } }
+            else picked = picked.filter(function (x) { return x !== r.id; });
+            sync();
+          });
+          var grouped = Array.isArray(r.trial_runs);
+          var k = trialCount(r);
+          var finished = typeof r.trials_finished === "number" ? r.trials_finished : k;
+          var rateCell = !r.n ? h("span", { class: "muted", text: grouped && finished === 0 ? "no trial finished yet" : "no cases" })
+            : h("div", null, h("strong", { class: "num", text: pct(r.pass_rate.point) }), " ",
+              h("span", { class: "muted small num", text: range(r.pass_rate) }),
+              grouped ? h("div", { class: "small", text: allTrials(finished, k) + (finished < k ? ", provisional" : "") }) : null,
+              h("div", null, ci(r.pass_rate)));
+          var tr = h("tr", { class: "click" },
+            h("td", null, cb),
+            h("td", { class: "num" }, h("a", { href: "#/run/" + r.id, text: "#" + r.id }),
+              grouped ? [" ", h("span", { class: "pill accent", text: "× " + plural(k, "trial") }),
+                finished < k ? [" ", h("span", { class: "pill", text: finished + " of " + k + " finished" })] : null]
+                : (r.finished_at ? null : h("span", { class: "pill", text: "unfinished" }))),
+            h("td", { text: when(r.started_at) }),
+            h("td", { text: r.dataset }),
+            h("td", { text: r.target }),
+            h("td", { text: r.model || "" }),
+            h("td", { text: r.split }),
+            h("td", null, rateCell),
+            h("td", { class: "num", text: r.n }),
+            h("td", { class: "num", text: costOf(r, r.cost_per_pass) + (grouped && typeof r.cost_per_pass === "number" && r.mixed_units !== true ? " per passing case result" : "") }),
+            h("td", { text: r.note || "" }),
+            h("td", null, r.is_baseline ? h("span", { class: "pill accent", text: "★ Baseline" }) : null));
+          tr.addEventListener("click", function (e) {
+            if (e.target.closest("a, input, button")) return;
+            location.hash = "#/run/" + r.id;
+          });
+          return tr;
+        });
+        var table = h("table", null,
+          h("caption", { class: "sr", text: "Runs for " + project }),
+          h("thead", null, h("tr", null, ["", "Run", "When", "Dataset", "Target", "Model", "Split", "Pass rate (95% interval)", "Cases", "Cost per passed case", "Note", ""].map(function (t, i) {
+            return h("th", { scope: "col", class: (i === 8 || i === 9) ? "num" : "", text: t });
+          }))),
+          h("tbody", null, rows));
+        mount(pageTitle("Runs"),
+          projectPicker(projects, project, function (p) { location.hash = "#/runs?" + q({ project: p }); }),
+          h("div", { class: "row tight" }, compareBtn, hint),
+          res.runs.some(function (r) { return Array.isArray(r.trial_runs); })
+            ? h("p", { class: "muted small", text: "A group of repeated trials is one row, linked to its first run. Its pass rate counts a case as passed only if it passed every trial." }) : null,
+          res.runs.length ? h("div", { class: "scroll" }, table)
+            : emptyCard("No runs for " + project, h("p", { class: "muted", text: "Pick another project." })),
+          res.runs.length >= 100 ? h("p", { class: "muted small", text: "Showing the newest 100 rows (a group of repeated trials is one row)." }) : null);
+      }));
+    }));
+  }
+
+  // ---------- Run ----------
+  function usageLine(u, n, per) {
+    per = per || "passed case";
+    var unit = per === "passed case" ? "case" : "case result";
+    var parts = [];
+    if (u.mixed_units === true) parts.push("cost: " + unitsText(u.cost_units) + ", so no total or cost per " + per);
+    else if (u.cost === null || u.cost === undefined) parts.push("cost not reported by the target");
+    else {
+      parts.push("cost " + cost(u.cost, u.cost_unit) + (u.cases_with_cost === n ? "" : " (reported for " + u.cases_with_cost + " of " + n + " " + unit + "s)"));
+      parts.push(typeof u.cost_per_pass === "number" ? "per " + per + " " + cost(u.cost_per_pass, u.cost_unit) : "nothing passed, so no cost per " + per);
+    }
+    parts.push("tokens in: " + tokens(u.prompt_tokens) + ", out: " + tokens(u.completion_tokens));
+    if (typeof u.median_duration_s === "number") parts.push("median " + u.median_duration_s.toFixed(1) + " s per " + unit);
+    return parts.join(" · ");
+  }
+
+  function runHeader(rep) {
+    var r = rep.run;
+    function row(k, v) { return v ? [h("dt", { text: k }), h("dd", null, v)] : null; }
+    return h("dl", { class: "meta" },
+      row("Project", r.project), row("Dataset", r.dataset + " (" + r.split + ", " + plural(rep.n, "case") + ")"),
+      row("Target", r.target), row("Command", h("span", { class: "mono", text: r.command.join(" ") })),
+      row("Model", r.model), row("Tool version", r.tool_version), row("Note", r.note), row("Started", when(r.started_at)));
+  }
+
+  function fourTiles(rep) {
+    var run = rep.run, n = rep.n, rate = rep.pass_rate;
+    var inGroup = !!rep.trials;
+    var tiles = [];
+    tiles.push(tile({ label: inGroup ? "1. Pass rate, this trial alone" : "1. Pass rate", value: pct(rate.point),
+      reading: "The true pass rate is probably between " + pct(rate.low) + " and " + pct(rate.high) + ".",
+      extra: ci(rate, true), sub: rep.n_passed + " of " + n + " cases passed; 95% interval " + range(rate) }));
+
+    var checks = rep.grader_checks;
+    if (checks.length) {
+      var worst = checks.slice().sort(function (a, b) { return a.agreement - b.agreement; })[0];
+      var list = h("div", { class: "small" }, checks.map(function (c) {
+        return h("p", null, h("strong", { text: c.grader }), ": agrees on " + pct(c.agreement) + " of " + plural(c.n, "label")
+          + ", kappa " + (c.kappa === null ? "n/a" : c.kappa.toFixed(2)) + ", catches " + pct(c.catch_rate) + " of bad outputs. " + c.trust + ".");
+      }));
+      tiles.push(tile({ label: "2. Grader vs human", value: pct(worst.agreement),
+        reading: checks.length === 1 ? "The grader agrees with your labels this often." : "The weakest grader agrees with your labels this often.",
+        extra: list, sub: rep.unchecked_judges.length ? "Judges not yet checked: " + rep.unchecked_judges.join(", ") : null }));
+    } else {
+      tiles.push(tile({ label: "2. Grader vs human", value: "Not measured", unmeasured: true,
+        reading: "No human labels yet, so nobody has checked the graders.",
+        extra: h("a", { href: "#/label/" + run.id, text: "Label some outputs" }),
+        sub: rep.unchecked_judges.length ? "Judges not yet checked: " + rep.unchecked_judges.join(", ") : null }));
+    }
+
+    var floor = rep.detection_floor;
+    if (floor === null) {
+      tiles.push(tile({ label: "3. Detection floor", value: "None", unmeasured: true,
+        reading: plural(n, "case") + " are too few to show any change.", sub: "At least 6 cases must change one way." }));
+    } else {
+      tiles.push(tile({ label: "3. Detection floor", value: "about " + (floor * 100).toFixed(0) + " points",
+        reading: "A smaller change than this cannot be told from noise.",
+        sub: "At least 6 of " + n + " cases must change one way before a difference can be shown." }));
+    }
+
+    var b = rep.baseline;
+    if (b) {
+      var worse = b.regressions;
+      var reading = worse.length ? "These passed on baseline run #" + b.baseline.id + " and fail now." : "No case that passed on baseline run #" + b.baseline.id + " fails now.";
+      if (inGroup) reading = (worse.length ? "These passed every trial of baseline run #" + b.baseline.id + " and no longer do." : "No case that passed every trial of baseline run #" + b.baseline.id + " has failed a trial.") + " This tile covers all trials of the group, not this trial alone.";
+      tiles.push(tile({ label: inGroup ? "4. Got worse, whole group" : "4. Got worse", value: worse.length + " of " + b.n,
+        reading: reading,
+        extra: h("div", { class: "small" },
+          b.warnings && b.warnings.length ? h("div", { class: "alert", role: "alert" }, h("strong", { text: plural(b.warnings.length, "warning") + " about this comparison:" }),
+            h("ul", null, b.warnings.map(function (w) { return h("li", { text: w }); }))) : null,
+          worse.length ? h("p", { class: "mono", text: worse.slice(0, 12).join(", ") + (worse.length > 12 ? " and " + (worse.length - 12) + " more" : "") }) : null,
+          h("a", { href: "#/compare/" + b.baseline.id + "/" + run.id, text: "Compare with baseline" })),
+        sub: "Overall: " + b.verdict + "." }));
+    } else if (rep.is_baseline) {
+      tiles.push(tile({ label: "4. Got worse", value: "Baseline", unmeasured: true,
+        reading: "This run is the baseline, so there is nothing to compare it with yet.",
+        sub: "Run a later version of the target and open its report." }));
+    } else {
+      tiles.push(tile({ label: "4. Got worse", value: "Not measured", unmeasured: true,
+        reading: "No baseline is set for " + run.dataset + ".",
+        sub: "Make this run, or an earlier good run, the baseline to see which cases got worse." }));
+    }
+    return h("div", { class: "tiles" }, tiles);
+  }
+
+  function caseBody(c, maxText) {
+    var cut = c.truncated || {};
+    var kids = [];
+    kids.push(field("Input", textBlock(c.input, { mono: true }), cut.input, maxText));
+    if (c.context) kids.push(field("Context", textBlock(c.context, { mono: true }), cut.context, maxText));
+    if (c.expected !== null && c.expected !== undefined) kids.push(field("Expected", textBlock(c.expected, { mono: true }), cut.expected, maxText));
+    kids.push(field("Output", textBlock(c.output, { mono: true }), cut.output, maxText));
+    if (c.grades.length) {
+      kids.push(field("Graders", h("div", { class: "scroll" }, h("table", null,
+        h("thead", null, h("tr", null, h("th", { scope: "col", text: "Grader" }), h("th", { scope: "col", text: "Result" }), h("th", { scope: "col", text: "Detail" }))),
+        h("tbody", null, c.grades.map(function (g) {
+          return h("tr", null, h("td", { text: g.grader }), h("td", null, resultMark(g.passed, g.error)),
+            h("td", null, g.detail ? h("span", { class: "text", text: g.detail }) : h("span", { class: "muted", text: "" })));
+        }))))));
+    }
+    if (c.error) kids.push(field("Error", textBlock(c.error, { mono: true }), cut.error, maxText));
+    var facts = ["took " + secs(c.duration_s)];
+    if (c.timed_out) facts.push("timed out");
+    if (c.exit_code !== null && c.exit_code !== undefined && c.exit_code !== 0) facts.push("exit code " + c.exit_code);
+    var m = c.meta || {};
+    facts.push("cost " + cost(m.cost, m.cost_unit));
+    facts.push("tokens in: " + tokens(m.prompt_tokens) + ", out: " + tokens(m.completion_tokens));
+    kids.push(h("p", { class: "muted small num", text: facts.join(" · ") }));
+    return kids;
+  }
+
+  function caseItem(c, maxText, startOpen) {
+    var body = h("div", { class: "body" });
+    var head = h("button", { type: "button", class: "head", "aria-expanded": "false" },
+      resultMark(c.passed, false), h("strong", { text: c.case_id }),
+      h("span", { class: "muted small num", text: secs(c.duration_s) }),
+      c.grades.filter(function (g) { return !g.passed || g.error; }).map(function (g) { return h("span", { class: "pill fail", text: "✗ " + g.grader }); }));
+    var item = h("div", { class: "case" }, head);
+    var open = false;
+    function toggle() {
+      open = !open;
+      head.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) { body.replaceChildren.apply(body, caseBody(c, maxText)); item.appendChild(body); }
+      else if (body.parentNode) item.removeChild(body);
+    }
+    head.addEventListener("click", toggle);
+    if (startOpen) toggle();
+    return item;
+  }
+
+  // The group figures of repeated trials. Every number is from the API (report.trial_summary).
+  function trialsBlock(tr, currentId) {
+    var k = plannedTrials(tr);
+    var nowIndex = tr.runs.indexOf(currentId);
+    var kids = [h("h2", { id: "group", text: "Repeated trials: the whole group of " + plural(k, "trial") })];
+    if (!tr.complete) {
+      kids.push(h("div", { class: "alert", role: "status" }, h("strong", { text: "Provisional. " }),
+        "Only " + tr.finished + " of " + k + " trials have finished, so these figures can still change."));
+    }
+    kids.push(h("p", { class: "small" }, "Trials in this group: ", tr.runs.map(function (rid, i) {
+      var label = "trial " + (i + 1) + " (run #" + rid + ")";
+      return [i ? " · " : null, rid === currentId
+        ? h("strong", { text: label + ", this page", "aria-current": "page" })
+        : h("a", { href: "#/run/" + rid, text: label })];
+    }), tr.runs.length < k ? " · " + (k - tr.runs.length) + " not started" : null));
+    if (!tr.finished || !tr.n) {
+      kids.push(h("p", { class: "muted", text: "No trial of this group has finished yet, so there are no group figures." }));
+      return kids;
+    }
+    var all = tr.passed_all, any = tr.passed_any, per = tr.per_trial;
+    kids.push(h("div", { class: "tiles" },
+      tile({ label: upFirst(allTrials(tr.finished, k)), value: pct(all.rate.point),
+        reading: all.n_passed + " of " + tr.n + " cases passed every trial" + (tr.finished < k ? " that finished." : "."),
+        extra: ci(all.rate, true),
+        sub: "95% interval " + range(all.rate) + ". Compare, gate and ranking use this figure." }),
+      tile({ label: "Passed at least once", value: pct(any.rate.point),
+        reading: any.n_passed + " of " + tr.n + " cases passed in at least one trial.", extra: ci(any.rate, true),
+        sub: "95% interval " + range(any.rate) + ". What the target can get right." }),
+      tile({ label: "Per-trial pass rate", value: pct(per.rate.point),
+        reading: per.n_passed + " of " + per.n + " case results passed (each case in each trial).", extra: ci(per.rate, true),
+        sub: "95% interval " + range(per.rate) + ". The interval counts each case once, so repeating a run does not make it narrower." })));
+    var byCase = {};
+    tr.cases.forEach(function (c) { byCase[c.case_id] = c; });
+    kids.push(h("h3", { text: "Unstable cases (" + tr.unstable_cases.length + ")" }));
+    if (tr.unstable_cases.length) {
+      kids.push(h("p", { class: "muted small", text: "Cases whose trials disagreed. Passes of trials, per case:" }),
+        h("ul", null, tr.unstable_cases.map(function (cid) {
+          var c = byCase[cid];
+          return h("li", null, h("span", { class: "mono", text: cid }), c ? ": passed " + c.passes + " of " + plural(c.trials, "trial") : "");
+        })));
+    } else {
+      kids.push(h("p", { class: "muted", text: "No case gave different results in different trials." }));
+    }
+    if (tr.target_error_trials) {
+      kids.push(h("h3", { text: "Target errors (" + tr.target_error_trials + ")" }),
+        h("p", { class: "fail", text: "The target itself failed (timeout, crash or similar) in " + plural(tr.target_error_trials, "case result") + ", in " + plural(tr.error_cases.length, "case") + ": " + tr.error_cases.slice(0, 12).join(", ") + (tr.error_cases.length > 12 ? " and " + (tr.error_cases.length - 12) + " more" : "") + "." }),
+        h("p", { class: "muted small", text: "Each of these counts as a failed case result, so its case did not pass every trial. They are not counted as instability: a case is unstable only when the trials that were graded disagree." }));
+    }
+    kids.push(h("h3", { text: "Usage, all " + trialsPhrase(tr.finished, k) + " together" }),
+      h("p", { class: "num", text: usageLine(tr.usage, per.n, "passing case result") }));
+    return kids;
+  }
+
+  function viewRun(id, ctx) {
+    return get("/api/runs/" + id).then(ctx.live(function (rep) {
+      var run = rep.run;
+      var inGroup = !!rep.trials;
+      var actions = h("div", { class: "row" });
+      var status = h("div", { "aria-live": "polite" });
+      var labelBtn = h("button", { type: "button", class: "primary", text: "Label outputs" });
+      labelBtn.addEventListener("click", function () { location.hash = "#/label/" + id; });
+      var baseBtn = h("button", { type: "button", text: rep.is_baseline ? (inGroup ? "This group is the baseline" : "This run is the baseline") : (inGroup ? "Make group the baseline" : "Make baseline"), disabled: rep.is_baseline });
+      function askConfirm() {
+        var yes = h("button", { type: "button", class: "primary", text: inGroup ? "Yes, make this group the baseline" : "Yes, make run #" + id + " the baseline" });
+        var no = h("button", { type: "button", text: "Cancel" });
+        var box = h("div", { class: "alert", role: "group", "aria-label": "Confirm baseline" },
+          h("p", { text: (inGroup ? "Make the whole group of " + plural(plannedTrials(rep.trials), "trial") + " (first run #" + rep.trials.runs[0] + ") the baseline" : "Make run #" + id + " the baseline") + " for " + run.project + " / " + run.dataset + "? Later runs on this dataset will be compared with it, and the current baseline is replaced." }),
+          h("div", { class: "row tight" }, yes, no));
+        status.replaceChildren(box);
+        yes.focus();
+        no.addEventListener("click", function () { status.replaceChildren(); baseBtn.focus(); });
+        yes.addEventListener("click", function () {
+          yes.disabled = true;
+          post("/api/baseline", { run: id }).then(ctx.live(function () { route(); }), ctx.live(function (e) {
+            status.replaceChildren(h("div", { class: "alert error", role: "alert", text: e.message }));
+          }));
+        });
+      }
+      baseBtn.addEventListener("click", askConfirm);
+      actions.appendChild(labelBtn); actions.appendChild(baseBtn);
+      if (rep.is_baseline) actions.appendChild(h("span", { class: "pill accent", text: "★ Baseline" }));
+
+      var parts = [h("p", { class: "small" }, h("a", { href: "#/runs?" + q({ project: run.project }), text: "← All runs of " + run.project })),
+        pageTitle("Run #" + id), runHeader(rep), actions, status];
+      if (inGroup) parts.push(trialsBlock(rep.trials, id));
+      var trialNo = inGroup ? rep.trials.runs.indexOf(id) + 1 : 0;
+      var alone = inGroup ? " (this trial alone)" : "";
+      if (inGroup) {
+        parts.push(h("h2", { text: "This trial alone: run #" + id + (trialNo ? ", trial " + trialNo + " of " + plannedTrials(rep.trials) : "") }),
+          h("p", { class: "muted small", text: "Everything below describes this one trial run, not the whole group. Labels belong to this trial run." }));
+      }
+      if (rep.n === 0) {
+        parts.push(emptyCard("This run has no cases", h("p", { text: "It was probably interrupted before the first case finished, so there are no numbers to report. Run it again." })));
+        return mount.apply(null, parts);
+      }
+      parts.push(fourTiles(rep));
+      parts.push(h("h2", { text: "Usage" + alone }), h("p", { class: "num", text: usageLine(rep.usage, rep.n) }));
+      parts.push(h("h2", { text: "Graders" + alone }), h("div", { class: "scroll" }, h("table", null,
+        h("thead", null, h("tr", null, ["Grader", "Type", "Decides pass or fail", "Passed", "Errors"].map(function (t, i) { return h("th", { scope: "col", class: i > 2 ? "num" : "", text: t }); }))),
+        h("tbody", null, rep.graders.map(function (g) {
+          return h("tr", null, h("td", { text: g.name }), h("td", { text: g.type }), h("td", { text: g.required ? "yes" : "no, informational" }),
+            h("td", { class: "num", text: g.n_passed + " of " + g.n }), h("td", { class: "num", text: g.errors }));
+        })))));
+      if (rep.target_errors) parts.push(h("p", { class: "fail", text: (inGroup ? "In this trial the target failed on " : "The target failed on ") + plural(rep.target_errors, "case") + " (" + plural(rep.timeouts, "timeout") + ")." }));
+
+      var list = h("div");
+      var filterAll = h("button", { type: "button", "aria-pressed": "true", text: "All cases (" + rep.n + ")" });
+      var filterFailed = h("button", { type: "button", "aria-pressed": "false", text: "Failed only (" + rep.failed_cases.length + ")" });
+      var casesData = null, failedOnly = false;
+      function draw() {
+        if (!casesData) return;
+        var shown = casesData.cases.slice().sort(function (a, b) { return (a.passed === b.passed) ? 0 : (a.passed ? 1 : -1); });
+        if (failedOnly) shown = shown.filter(function (c) { return !c.passed; });
+        var kids = shown.map(function (c) { return caseItem(c, casesData.max_text, false); });
+        if (!kids.length) kids = [h("p", { class: "muted", text: failedOnly ? "No failed cases." : "No cases." })];
+        if (casesData.total > casesData.shown) kids.push(h("p", { class: "muted small", text: "Showing the first " + casesData.shown + " of " + casesData.total + " cases." }));
+        list.replaceChildren.apply(list, kids);
+      }
+      function setFilter(f) {
+        failedOnly = f;
+        filterAll.setAttribute("aria-pressed", f ? "false" : "true");
+        filterFailed.setAttribute("aria-pressed", f ? "true" : "false");
+        draw();
+      }
+      filterAll.addEventListener("click", function () { setFilter(false); });
+      filterFailed.addEventListener("click", function () { setFilter(true); });
+      parts.push(h("h2", { text: "Cases" + alone }), h("div", { class: "row tight", role: "group", "aria-label": "Filter cases" }, filterAll, filterFailed), list);
+      mount.apply(null, parts);
+      list.appendChild(h("p", { class: "muted", text: "Loading cases…" }));
+      get("/api/runs/" + id + "/cases").then(ctx.live(function (d) { casesData = d; draw(); }), ctx.live(function (e) {
+        list.replaceChildren(h("div", { class: "alert error", role: "alert", text: e.message }));
+      }));
+    }));
+  }
+
+  // ---------- Compare ----------
+  function viewCompare(a, b, ctx) {
+    return get("/api/compare?" + q({ baseline: a, candidate: b })).then(ctx.live(function (c) {
+      var base = c.baseline, cand = c.candidate;
+      var bTrials = trialCount({ trials: c.baseline_trials }), cTrials = trialCount({ trials: c.candidate_trials });
+      var perCase = Array.isArray(c.per_case) ? c.per_case : null;
+      function runLine(label, r, rate, k) {
+        return h("div", { class: "tile" }, h("div", { class: "label", text: label + (k > 1 ? ": " + allTrials(k, k) : "") }),
+          h("div", { class: "value", text: pct(rate) }),
+          h("div", { class: "reading" }, h("a", { href: "#/run/" + r.id, text: "Run #" + r.id }), " · " + r.target),
+          h("div", { class: "sub", text: r.dataset + " (" + r.split + ")" + (r.model ? " · " + r.model : "") }));
+      }
+      var diffText = c.n ? points(c.diff.point) : "n/a";
+      var parts = [h("p", { class: "small" }, h("a", { href: "#/runs?" + q({ project: cand.project }), text: "← All runs" })),
+        pageTitle("Compare #" + base.id + " with #" + cand.id),
+        h("div", { class: "verdict", role: "status", text: c.verdict })];
+      if (c.warnings.length) {
+        parts.push(h("div", { class: "alert", role: "alert" }, h("strong", { text: plural(c.warnings.length, "warning") + ":" }),
+          h("ul", null, c.warnings.map(function (w) { return h("li", { text: w }); }))));
+      }
+      parts.push(h("div", { class: "tiles" },
+        runLine("Baseline pass rate", base, c.baseline_rate, bTrials), runLine("Candidate pass rate", cand, c.candidate_rate, cTrials),
+        tile({ label: "Difference", value: diffText, reading: c.n ? "Candidate minus baseline, on " + plural(c.n, "shared case") + "." : "The runs share no cases.",
+          sub: c.n ? "95% bootstrap interval " + points(c.diff.low) + " to " + points(c.diff.high) : null }),
+        tile({ label: "McNemar p", value: c.p_value === null ? "n/a" : c.p_value.toFixed(3),
+          reading: c.measurable ? "Below 0.05: the difference is measurable." : "Not below 0.05: the difference is not measurable.",
+          sub: c.detection_floor === null ? "Too few shared cases to show any change." : "Detection floor about " + (c.detection_floor * 100).toFixed(0) + " points." })));
+
+      if (perCase) {
+        parts.push(h("p", { class: "card" }, h("strong", { text: "Repeated trials. " }),
+          "A case counts as passed only if it passed every trial. The baseline ran " + plural(bTrials, "trial") + " per case and the candidate " + plural(cTrials, "trial") + ". The pass rates, the verdict and the lists of cases that got worse or better use that rule."));
+      }
+
+      function caseList(title, ids, empty) {
+        var panel = h("div");
+        var items = ids.map(function (id) {
+          var btn = h("button", { type: "button", "aria-expanded": "false", text: id });
+          btn.addEventListener("click", function () {
+            var open = btn.getAttribute("aria-expanded") === "true";
+            btn.setAttribute("aria-expanded", open ? "false" : "true");
+            if (open) { panel.replaceChildren(); return; }
+            panel.replaceChildren(h("p", { class: "muted", text: "Loading…" }));
+            Promise.all([get("/api/runs/" + base.id + "/cases?" + q({ case: id })), get("/api/runs/" + cand.id + "/cases?" + q({ case: id }))]).then(ctx.live(function (rs) {
+              function col(label, r, d) {
+                var cs = d.cases[0];
+                return h("div", { class: "card" }, h("h3", null, label + " · run #" + r.id + " · ", resultMark(cs.passed, false)), caseBody(cs, d.max_text));
+              }
+              panel.replaceChildren(h("div", { class: "cols" }, col("Baseline", base, rs[0]), col("Candidate", cand, rs[1])));
+            }), ctx.live(function (e) { panel.replaceChildren(h("div", { class: "alert error", role: "alert", text: e.message })); }));
+          });
+          return btn;
+        });
+        return [h("h2", { text: title + " (" + ids.length + ")" }),
+          ids.length ? h("div", { class: "list" }, items) : h("p", { class: "muted", text: empty }), panel];
+      }
+      if (perCase) parts.push(h("p", { class: "muted small", text: "Opening a case below shows the run named in each column. For repeated trials that is one trial, not the verdict over all of them; the other trials are on that run's page." }));
+      parts.push(caseList("Got worse", c.regressions, "No case passed on the baseline and fails now."));
+      parts.push(caseList("Got better", c.improvements, "No case failed on the baseline and passes now."));
+      if (perCase) {
+        parts.push(h("h2", { text: "Each case on its own (" + perCase.length + ")" }));
+        if (perCase.length === 0) {
+          parts.push(h("p", { class: "muted", text: "The two sides share no cases." }));
+        } else {
+          var rows = perCase.slice().sort(function (x, y) {
+            var px = typeof x.p_value === "number" ? x.p_value : 2, py = typeof y.p_value === "number" ? y.p_value : 2;
+            return px - py || (x.case_id < y.case_id ? -1 : (x.case_id > y.case_id ? 1 : 0));
+          });
+          var below = perCase.filter(function (x) { return typeof x.p_value === "number" && x.p_value < 0.05; }).length;
+          parts.push(h("p", { text: "Trials passed before and after, with a Fisher exact p-value, ordered by p-value. When many cases are tested one by one, about 1 in 20 crosses 0.05 by chance, so a small p-value on one case is not a finding on its own." }),
+            h("p", { class: "num", text: below + " of " + plural(perCase.length, "case") + " have p below 0.05." }),
+            h("div", { class: "scroll" }, h("table", null,
+              h("caption", { class: "sr", text: "Each case: trials passed before and after, and p-value" }),
+              h("thead", null, h("tr", null, ["Case", "Trials passed before", "Trials passed after", "p-value"].map(function (t, i) { return h("th", { scope: "col", class: i ? "num" : "", text: t }); }))),
+              h("tbody", null, rows.map(function (x) {
+                return h("tr", null, h("td", { class: "mono", text: x.case_id }),
+                  h("td", { class: "num", text: x.baseline_passes + " of " + x.baseline_trials }),
+                  h("td", { class: "num", text: x.candidate_passes + " of " + x.candidate_trials }),
+                  h("td", { class: "num", text: typeof x.p_value === "number" ? x.p_value.toFixed(3) : "n/a" }));
+              })))));
+        }
+      }
+      mount.apply(null, parts);
+    }));
+  }
+
+  // ---------- Ranking ----------
+  function viewRank(params, ctx) {
+    return get("/api/projects").then(ctx.live(function (data) {
+      var projects = data.projects;
+      if (!projects.length) {
+        return mount(pageTitle("Ranking"), emptyCard("No projects yet", [h("p", { text: "Ranking needs finished runs. Make some first:" }), h("pre", { class: "cmd", text: RUN_COMMAND })]));
+      }
+      var names = projects.map(function (p) { return p.project; });
+      var project = params.get("project") || recall("project");
+      if (names.indexOf(project) < 0) project = names[0];
+      var proj = projects[names.indexOf(project)];
+      var dsNames = proj.datasets.map(function (d) { return d.dataset; });
+      var dataset = params.get("dataset");
+      if (dsNames.indexOf(dataset) < 0) dataset = dsNames[0];
+      var split = params.get("split") || "test";
+      function go(p, d, s) { location.hash = "#/rank?" + q({ project: p, dataset: d, split: s }); }
+      var dsSel = h("select", { "aria-label": "Dataset" }, dsNames.map(function (d) { return h("option", { value: d, text: d }); }));
+      dsSel.value = dataset;
+      var spSel = h("select", { "aria-label": "Split" }, ["test", "dev", "all"].map(function (s) { return h("option", { value: s, text: s }); }));
+      spSel.value = split;
+      var pSel = h("select", { "aria-label": "Project" }, names.map(function (n) { return h("option", { value: n, text: n }); }));
+      pSel.value = project;
+      pSel.addEventListener("change", function () { go(pSel.value, "", split); });
+      dsSel.addEventListener("change", function () { go(project, dsSel.value, spSel.value); });
+      spSel.addEventListener("change", function () { go(project, dsSel.value, spSel.value); });
+      var pickers = h("div", { class: "row" }, h("label", null, "Project ", pSel), h("label", null, "Dataset ", dsSel), h("label", null, "Split ", spSel));
+      return get("/api/rank?" + q({ project: project, dataset: dataset, split: split })).then(ctx.live(function (res) {
+        var out = [pageTitle("Ranking"), h("p", { class: "muted", text: "The newest comparable run of each target: same dataset file, graders and cases as the latest run. A higher place is not proof of a better target; read the last column." }), pickers];
+        if (!res.rows.length) {
+          out.push(emptyCard("No finished runs", h("p", { text: "There are no finished " + split + " runs of " + dataset + " in " + project + "." })));
+        } else {
+          var head = ["#", "Target", "Pass rate", "Cases", "Cost per passed case", "Median time", "Compared with the leader", "Run"];
+          var rows = res.rows.map(function (r, i) {
+            return h("tr", null, h("td", { class: "num", text: i + 1 }),
+              h("td", null, h("strong", { text: r.target }), r.model ? h("div", { class: "muted small", text: r.model }) : null),
+              h("td", { class: "num" }, h("strong", { text: pct(r.pass_rate.point) }), " ", h("span", { class: "muted small", text: range(r.pass_rate) }),
+                trialCount(r) > 1 ? h("div", { class: "small", text: allTrials(trialCount(r), trialCount(r)) }) : null, ci(r.pass_rate, true)),
+              h("td", { class: "num", text: r.n_passed + " of " + r.n }),
+              h("td", { class: "num", text: costOf(r.usage, r.usage.cost_per_pass) + (trialCount(r) > 1 && typeof r.usage.cost_per_pass === "number" && r.usage.mixed_units !== true ? " per passing case result" : "") }),
+              h("td", { class: "num", text: secs(r.usage.median_duration_s) }),
+              h("td", { text: r.vs_leader }),
+              h("td", null, h("a", { href: "#/run/" + r.run, text: "#" + r.run })));
+          });
+          out.push(h("div", { class: "scroll" }, h("table", null,
+            h("thead", null, h("tr", null, head.map(function (t, i) {
+              if (i === 2) return h("th", { scope: "col", class: "num" }, "Pass rate, 0 to 100%", h("span", { class: "axis-head" }, h("span", { text: "0" }), h("span", { text: "50" }), h("span", { text: "100" })));
+              return h("th", { scope: "col", class: (i === 0 || i === 3 || i === 4 || i === 5) ? "num" : "", text: t });
+            }))), h("tbody", null, rows))));
+        }
+        if (typeof res.cost_note === "string" && res.cost_note) out.push(h("p", { class: "muted small", text: res.cost_note }));
+        if (res.skipped.length) {
+          out.push(h("h2", { text: "Skipped" }), h("ul", null, res.skipped.map(function (s) {
+            return h("li", null, h("a", { href: "#/run/" + s.run, text: "Run #" + s.run }), " (" + s.target + "): " + s.reason);
+          })));
+        }
+        mount.apply(null, out);
+      }));
+    }));
+  }
+
+  // ---------- Label ----------
+  function viewLabel(id, params, ctx) {
+    var grader = params.get("grader") || "";
+    return get("/api/runs/" + id + "/queue?" + q({ grader: grader })).then(ctx.live(function (d) {
+      var items = d.items.slice(), done = d.done, remaining = d.remaining, skipped = 0, busy = false;
+      var stage = h("div");
+      var message = h("div", { "aria-live": "polite" });
+      var noteInput = h("input", { type: "text", id: "note", maxlength: "2000", placeholder: "Optional note" });
+      var progress = h("progress", { max: String(Math.max(1, done + remaining)), value: String(done), "aria-label": "Labelling progress" });
+      var progressText = h("p", { class: "muted num" });
+
+      var graderSel = h("select", { "aria-label": "What to label" }, h("option", { value: "", text: "Overall verdict" }),
+        d.graders.map(function (g) { return h("option", { value: g, text: "Grader: " + g }); }));
+      graderSel.value = grader;
+      graderSel.addEventListener("change", function () { location.hash = "#/label/" + id + "?" + q({ grader: graderSel.value }); });
+
+      function finish() {
+        stage.replaceChildren(emptyCard("Nothing left to label", [
+          h("p", { text: skipped ? "Every output is labelled or skipped. Skipped outputs come back next time you open this page." : "Every output of this run has a label for this check." }),
+          h("p", null, h("a", { href: "#/run/" + id, text: "Back to run #" + id }), " to see how well the grader agrees with you.")]));
+      }
+      function show() {
+        progress.value = done; progress.max = Math.max(1, done + remaining);
+        progressText.textContent = plural(done, "output") + " labelled, " + remaining + " left" + (skipped ? ", " + skipped + " skipped for now" : "") + ".";
+        if (!items.length) {
+          if (remaining > 0 && !skipped) return reload();
+          return finish();
+        }
+        var c = items[0];
+        var kids = [field("Input", textBlock(c.input, { mono: true, max: 3000 }))];
+        if (c.context) kids.push(field("Context given to the system", textBlock(c.context, { mono: true, max: 3000 })));
+        if (c.expected !== null && c.expected !== undefined) kids.push(field("Expected", textBlock(c.expected, { mono: true, max: 3000 })));
+        var out = field("Output", textBlock(c.output, { mono: true, max: 6000 }));
+        out.className += " output";
+        kids.push(out);
+        var passB = h("button", { type: "button", class: "primary", id: "btn-pass" }, "Pass", h("kbd", { text: "p" }));
+        var failB = h("button", { type: "button", id: "btn-fail" }, "Fail", h("kbd", { text: "f" }));
+        var skipB = h("button", { type: "button", id: "btn-skip" }, "Skip", h("kbd", { text: "s" }));
+        passB.addEventListener("click", function () { act("p"); });
+        failB.addEventListener("click", function () { act("f"); });
+        skipB.addEventListener("click", function () { act("s"); });
+        stage.replaceChildren(h("div", { class: "card label-card" },
+          h("p", { class: "muted small", text: "Case " + c.case_id }),
+          h("p", { class: "question", text: d.question }), kids,
+          h("div", { class: "verdict-buttons", role: "group", "aria-label": "Your verdict" }, passB, failB, skipB),
+          h("label", { class: "field" }, h("span", { class: "name small muted", text: "Note" }), h("div", null, noteInput))));
+      }
+      function reload() {
+        get("/api/runs/" + id + "/queue?" + q({ grader: grader })).then(ctx.live(function (n) {
+          items = n.items; done = n.done; remaining = n.remaining; skipped = 0; show();
+        }), ctx.live(function (e) { message.replaceChildren(h("div", { class: "alert error", role: "alert", text: e.message })); }));
+      }
+      function act(kind) {
+        if (busy || !items.length) return;
+        var c = items[0];
+        if (kind === "s") { items.push(items.shift()); skipped += 1; message.replaceChildren(); show(); return; }
+        busy = true;
+        post("/api/label", { run: id, case_id: c.case_id, passed: kind === "p", grader: grader || null, note: noteInput.value.trim() || null }).then(ctx.live(function () {
+          items.shift(); done += 1; remaining -= 1; busy = false; message.replaceChildren(); noteInput.value = ""; show();
+        }), ctx.live(function (e) {
+          busy = false; message.replaceChildren(h("div", { class: "alert error", role: "alert", text: "Could not save the label: " + e.message }));
+        }));
+      }
+      function onKey(e) {
+        if (!ctx.alive() || busy) return;
+        if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+        var t = e.target;
+        if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+        var k = (e.key || "").toLowerCase();
+        if (k === "p" || k === "f" || k === "s") { e.preventDefault(); act(k); }
+      }
+      document.addEventListener("keydown", onKey);
+      ctx.onLeave(function () { document.removeEventListener("keydown", onKey); });
+
+      mount(h("p", { class: "small" }, h("a", { href: "#/run/" + id, text: "← Run #" + id })),
+        pageTitle("Label outputs of run #" + id),
+        h("p", { class: "muted", text: "The grader's own verdict is hidden on purpose, so your label is independent. Shortcuts: p, f, s." }),
+        h("div", { class: "row tight" }, h("label", null, "Labelling: ", graderSel)),
+        progress, progressText, message, stage);
+      show();
+    }));
+  }
+
+  // ---------- router ----------
+  function showError(e) {
+    if (e && e.status === 404) {
+      return mount(pageTitle("Not found"), emptyCard(e.message || "Not found", h("p", null, h("a", { href: "#/runs", text: "Go to the list of runs" }))));
+    }
+    var retry = h("button", { type: "button", text: "Try again" });
+    retry.addEventListener("click", function () { route(); });
+    mount(pageTitle("Something went wrong"), h("div", { class: "alert error", role: "alert", text: (e && e.message) || "Unexpected error" }), retry);
+  }
+
+  // Exact route table: the hash is parsed into a name and parameters; no prefix matching.
+  var ID = /^[0-9]{1,15}$/;  // below 2^53, so parseInt is exact
+  function parseRoute() {
+    var hash = location.hash.replace(/^#/, "") || "/runs";
+    var qi = hash.indexOf("?");
+    var path = qi < 0 ? hash : hash.slice(0, qi);
+    var params = new URLSearchParams(qi < 0 ? "" : hash.slice(qi + 1));
+    var seg = path.split("/").filter(Boolean);
+    var r = { name: null, path: path, params: params, ids: [] };
+    function ids(from, count) {
+      if (seg.length !== from + count) return false;
+      for (var i = from; i < seg.length; i++) { if (!ID.test(seg[i])) return false; r.ids.push(parseInt(seg[i], 10)); }
+      return true;
+    }
+    if (seg.length === 0 || (seg[0] === "runs" && seg.length === 1)) r.name = "runs";
+    else if (seg[0] === "rank" && seg.length === 1) r.name = "rank";
+    else if (seg[0] === "run" && ids(1, 1)) r.name = "run";
+    else if (seg[0] === "compare" && ids(1, 2)) r.name = "compare";
+    else if (seg[0] === "label" && ids(1, 1)) r.name = "label";
+    return r;
+  }
+
+  function route() {
+    var my = ++navId;
+    var leaving = cleanups;
+    cleanups = [];
+    leaving.forEach(function (fn) { try { fn(); } catch (e) { /* a cleanup must not block navigation */ } });
+    var ctx = {
+      alive: function () { return my === navId; },
+      // Wrap an async continuation so it does nothing once the user has navigated on.
+      live: function (fn) { return function () { if (my !== navId) return undefined; return fn.apply(this, arguments); }; },
+      onLeave: function (fn) { if (my === navId) cleanups.push(fn); else fn(); }
+    };
+    var r = parseRoute();
+    ["nav-runs", "nav-rank"].forEach(function (nid) { document.getElementById(nid).removeAttribute("aria-current"); });
+    document.getElementById(r.name === "rank" ? "nav-rank" : "nav-runs").setAttribute("aria-current", "page");
+    var p;
+    if (r.name === "run") p = viewRun(r.ids[0], ctx);
+    else if (r.name === "compare") p = viewCompare(r.ids[0], r.ids[1], ctx);
+    else if (r.name === "label") p = viewLabel(r.ids[0], r.params, ctx);
+    else if (r.name === "rank") p = viewRank(r.params, ctx);
+    else if (r.name === "runs") p = viewRuns(r.params, ctx);
+    else p = Promise.reject(new ApiError(404, "There is no page at #" + r.path));
+    mount(h("p", { class: "muted", text: "Loading…" }));
+    p.then(ctx.live(function () {
+      var t = document.getElementById("title");
+      if (t) t.focus({ preventScroll: true });
+      window.scrollTo(0, 0);
+    }), ctx.live(showError));
+  }
+
+  window.addEventListener("hashchange", route);
+  route();
+})();
+</script>
+</body>
+</html>

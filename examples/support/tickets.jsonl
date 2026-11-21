@@ -1,0 +1,16 @@
+{"id": "d01", "split": "dev", "input": "I'd like a refund for the lamp I sent you on Monday.", "expected": "returns"}
+{"id": "d02", "split": "dev", "input": "How long does shipping to Norway take?", "expected": "shipping"}
+{"id": "d03", "split": "dev", "input": "The pedal broke off during my first ride.", "expected": "warranty"}
+{"id": "d04", "split": "dev", "input": "Why was I charged a restocking fee?", "expected": "billing"}
+{"id": "t01", "split": "test", "input": "I returned my bike last week but still haven't seen the refund.", "expected": "returns"}
+{"id": "t02", "split": "test", "input": "Where is my order? Tracking hasn't updated in five days.", "expected": "shipping"}
+{"id": "t03", "split": "test", "input": "The tent pole snapped on first use. Is this covered by warranty?", "expected": "warranty"}
+{"id": "t04", "split": "test", "input": "I was charged twice for the same helmet.", "expected": "billing"}
+{"id": "t05", "split": "test", "input": "My stove arrived broken, I want to return it.", "expected": "returns"}
+{"id": "t06", "split": "test", "input": "The frame cracked after two months, and I'd like a refund or a replacement under warranty.", "expected": "warranty"}
+{"id": "t07", "split": "test", "input": "Can you deliver to a PO box?", "expected": "shipping"}
+{"id": "t08", "split": "test", "input": "The invoice shows the wrong VAT number.", "expected": "billing"}
+{"id": "t09", "split": "test", "input": "My sleeping bag zipper is defective, how do I claim?", "expected": "warranty"}
+{"id": "t10", "split": "test", "input": "Do you have this jacket in size M?", "expected": "product"}
+{"id": "t11", "split": "test", "input": "I want to send back the gloves, they don't fit.", "expected": "returns"}
+{"id": "t12", "split": "test", "input": "The package says delivered but I got nothing, and you still charged me.", "expected": "shipping"}
