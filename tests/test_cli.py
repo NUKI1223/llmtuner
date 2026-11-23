@@ -174,7 +174,7 @@ class CliTests(unittest.TestCase):
         self.run_target("bad6", "main", "--limit", "3")
         text, _ = self.cli("gate", "2", expect=1)
         self.assertIn("only 3 cases are in both runs", text)
-        self.assertIn("note:", text)
+        self.assertIn("the gate needs a full run", text)  # a limit that cut cases cannot pass the gate
 
     # --- errors ---------------------------------------------------------------
 

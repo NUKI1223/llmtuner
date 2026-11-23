@@ -65,12 +65,15 @@ def run_eval(
     on_case: Callable[[Case, bool], None] | None = None,
     trials: int = 1,
     on_trial: Callable[[int, int], None] | None = None,
+    origin: str = "cli",
 ) -> int:
     """Run one target on one dataset split and return the id of the stored run.
 
     With `trials` above 1 every case is run that many times, to see how stable the target is.
     Each trial is stored as an ordinary run; the runs share a trial group and the id of the
     first one is returned. The dataset is read once, so every trial records the same data.
+`origin` records where the run came from ("cli", "mcp" or "ui"). `split` is "dev", "test",
+"holdout" or "all" (dev and test; holdout is never part of "all").
     """
     if not isinstance(trials, int) or isinstance(trials, bool) or not 1 <= trials <= MAX_TRIALS:
         raise ConfigError(f"trials must be a whole number from 1 to {MAX_TRIALS}")
@@ -82,6 +85,7 @@ def run_eval(
 
     cases, dataset_hash = load_cases(dataset.path)
     cases = select_split(cases, split)
+    cases_selected = len(cases)
     if limit is not None:
         if limit < 1:
             raise ConfigError("limit must be at least 1")
@@ -139,6 +143,9 @@ def run_eval(
                 trial_group=first_id if grouped else None,
                 trial=trial_no if grouped else None,
                 trials_planned=trials if grouped else None,
+                origin=origin,
+                case_limit=limit,
+                cases_selected=cases_selected,
             )
             first_id = first_id or run_id
             if on_trial:

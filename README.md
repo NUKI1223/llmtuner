@@ -62,7 +62,7 @@ type = "exact"
 {"id": "t1", "input": "Where is my order?", "expected": "shipping", "split": "test"}
 ```
 
-`split` is `dev` or `test` and defaults to `test`. Tune prompts and graders on `dev`; report on `test`, which is what `run` uses unless you pass `--split`. `expected` may be an object when graders need several fields, and `context` holds text the system was given, which judge graders see.
+`split` is `dev`, `test` or `holdout` and defaults to `test`. Tune prompts and graders on `dev`; report on `test`, which is what `run` uses unless you pass `--split`; keep `holdout` for a last check that nobody tunes against. `--split all` means dev and test, never holdout: that split runs only when named. `expected` may be an object when graders need several fields, and `context` holds text the system was given, which judge graders see.
 
 **Graders** decide pass or fail. A case passes when every required grader passes.
 
@@ -132,6 +132,31 @@ Cases whose trials disagree are listed as unstable. A trial that ended in a targ
 
 Trials multiply the number of target calls and the cost. Passing every trial is stricter with more trials, so compare groups with the same number; `compare` warns when they differ, and `rank` only ranks groups with the same number of trials. A target can read which trial it is from the `LLMTUNER_TRIAL` environment variable.
 
+## Guarding against overfitting
+
+Tuning a prompt until the test numbers look good, or "fixing" an expectation until the target agrees with it, makes the numbers lie. Three things keep that visible.
+
+**The change log.** Each dataset has a log next to it, `<dataset>.changes.jsonl` (`data/x-v1.jsonl` gets `data/x-v1.changes.jsonl`). A project can put it elsewhere with `changes = "artifacts/x.changes.jsonl"` under `[datasets.NAME]`, relative to the project folder. One line per edit: when, which case, who (`human` or `agent`, and how that was told), why, what the basis was, and the old and new values of the fields that changed. Edit cases with the command, not by hand, and the entry is written for you:
+
+```bash
+llmtuner case edit tickets t1 --expected shipping --reason "the owner said refunds are billing, not shipping"
+llmtuner case edit tickets t1 --split dev --reason "too easy to keep in test"
+```
+
+Only that case's line in the file changes, and it is written atomically; if the log cannot be written the file is put back. Edits (and `split --apply`) take a lock on `<change log>.lock` next to the change log (so a log kept out of git keeps its lock there too), so two at once cannot lose each other's work; the file is safe to leave around (the operating system drops the lock when its process ends), and you can ignore it in version control. Use `--expected-json` and `--input-json` for objects, `--context` and `--split` for the rest. A reason is required for a case that is in `test` or `holdout` before or after the edit, whether a person or an agent edits it. An agent must also give a basis: `--basis-rule NAME` (a rule or file) or `--basis-owner "the owner's words"`, never what the model answered. The code cannot check that a quote is genuine; it is shown in the report.
+
+Who is editing: through MCP always an agent. In the CLI, an agent if `CLAUDECODE` or `AI_AGENT` is set in the environment (Claude Code sets the first) or `--by agent` is given; `--by human` cannot override the environment. An edit made behind the tool's back (a text editor) has no entry and shows as "unrecorded".
+
+**Changed cases.** Every run keeps the case data and split it used. `report` shows, at the top, the cases that changed since the previous run of the same dataset and split: which fields, and whether a person, an agent, or nobody recorded it. `compare` and `gate` leave every changed or removed case out of the paired comparison and list them (a case only counts as removed if the newer run had no `--limit`, or a limit that cut nothing). A baseline stored before this version has no case splits; its changes show as "before the log" and never fail a gate, so after upgrading, edits are caught only once the owner sets a new baseline. A change counts as logged only if the log's last entry for each changed field ends at the value the run stored, and a person's entry for a test or holdout case has a reason; otherwise it is "unrecorded". A removed case counts as logged only if its last logged move takes it out of the split you run; a deletion or rename has no logged path, so it is always "unrecorded". A case moved into the split you run (say dev to test) is new to the run, not paired, and is listed only if the log shows the move; an unlogged move is invisible. `rank` groups runs by what the cases contain, so an edit to some other case in the file does not split them.
+
+`gate` fails when a test or holdout case changed after the baseline run by an agent or with no log entry, and says so. It also fails when the run used a `--limit` that cut cases ("the gate needs a full run"). A change by a person with a reason is only listed. To go on after reviewing the change, set a new baseline: `llmtuner baseline RUN`.
+
+**The holdout.** It is a third split, never part of `all`. `llmtuner split DATASET` prints a random division (default 50% dev, 30% test, 20% holdout; `--dev`, `--test`, `--holdout` set the shares, `--seed` fixes it, and the seed is always printed) and writes nothing. `--apply` writes it with a log entry per moved case, and refuses to run in an agent's shell.
+
+Through MCP an agent may run the holdout at most once in any 24 hours per project and dataset (a run uses its attempt once it has started, finished or not, so a failed or interrupted run costs it; a run refused before starting, for example because the data failed a check, does not; repeated trials count as one run), never with the MCP `limit` parameter, and sees only totals: no case ids, inputs, outputs, failures or reasons. `show_cases` refuses a holdout run, and MCP cannot edit a holdout case or move one in or out. People using the CLI or the web page are not limited.
+
+This protects against agents that have only MCP. An agent with a shell or file access can read the dataset file and its log directly, and then nothing here hides the holdout. Also, a case moved from test into the holdout was probably run before, so `show_cases` on those older test runs still shows its input and output (comparisons for agents pair only cases stored as holdout in both runs, so they do not leak its pass or fail). So `llmtuner split` puts into holdout only cases that were never in a run outside holdout, and says so when that leaves the holdout smaller than asked (add new cases for the rest); `case edit --split holdout` on a case that was already run warns.
+
 ## The web page
 
 ```bash
@@ -168,6 +193,8 @@ Kappa corrects agreement for chance. The report treats 0.6 as enough to gate a r
 | `report [RUN]` | the four numbers for a run (default: this project's latest) |
 | `compare BASELINE CANDIDATE` | case-by-case comparison of two runs |
 | `baseline RUN` | make a run the baseline for its dataset |
+| `case edit DATASET CASE` | change a case's expected value, input, context or split, and log it |
+| `split DATASET` | propose a random dev / test / holdout division; `--apply` writes it |
 | `gate [RUN]` | exit 1 if the pass rate fell more than `--max-drop` below the baseline |
 | `show [RUN]` | read inputs, outputs and grades; `--failed` for failures only |
 | `label [RUN]` | record human pass/fail labels |
@@ -206,11 +233,11 @@ uv run --no-project --with 'mcp>=2,<3' --with-editable /path/to/LLMtuner llmtune
 
 A target's `python3` is whatever `python3` is on the `PATH` (under `uv run`, uv's temporary environment), not your project's. If a target needs your project's packages, name its interpreter in the target command, for example `[".venv/bin/python", "answer.py"]`.
 
-The agent gets seven tools: `describe_project`, `run_eval`, `get_report`, `compare_runs`, `check_gate`, `list_runs` and `show_cases`.
+The agent gets eight tools: `describe_project`, `run_eval`, `get_report`, `compare_runs`, `check_gate`, `list_runs`, `show_cases` and `edit_case`. `get_report`, `compare_runs` and `check_gate` take an optional `project_dir` so they can read the change log; without it every change shows as unrecorded. `check_gate` always uses the baseline a person set; an agent cannot name another.
 
 `run_eval` runs whatever targets the named project's `llmtuner.toml` defines, so an agent that can write that file can choose what runs; connect it only to agents you would let run commands.
 
-Two things are left out on purpose. Tools take the *name* of a target from the project's config, never a command to run. And agents cannot write human labels or set the baseline: those are the ground truth the graders are checked against.
+Two things are left out on purpose. Tools take the *name* of a target from the project's config, never a command to run. And agents cannot write human labels or set the baseline: those are the ground truth the graders are checked against. `edit_case` does change expectations, so it is always logged as an agent's edit, with the reason and basis it requires; see "Guarding against overfitting" for the holdout limits.
 
 ## Tests
 

@@ -3,7 +3,8 @@
     {"id": "t1", "input": "...", "expected": "returns", "split": "test"}
 
 `input` and `expected` may be a string or an object. `split` is "dev" (for
-tuning prompts and graders) or "test" (for reporting) and defaults to "test".
+tuning prompts and graders), "test" (for reporting) or "holdout" (kept back; a
+last check that nobody tunes against) and defaults to "test".
 `context` is optional text the system was given, shown to judge graders.
 """
 
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SPLITS = ("dev", "test")
+SPLITS = ("dev", "test", "holdout")
 
 
 class DatasetError(ValueError):
@@ -65,7 +66,7 @@ def load_cases(path: Path) -> tuple[list[Case], str]:
         seen.add(case_id)
         split = row.get("split", "test")
         if split not in SPLITS:
-            raise DatasetError(f"{where}: split must be \"dev\" or \"test\"")
+            raise DatasetError(f"{where}: split must be \"dev\", \"test\" or \"holdout\"")
         context = row.get("context")
         if context is not None and not isinstance(context, str):
             raise DatasetError(f"{where}: context must be a string")
@@ -76,11 +77,13 @@ def load_cases(path: Path) -> tuple[list[Case], str]:
 
 
 def select_split(cases: list[Case], split: str) -> list[Case]:
+    """The cases of one split. "all" is dev and test: holdout is never included implicitly."""
     if split == "all":
-        return cases
-    if split not in SPLITS:
-        raise DatasetError("split must be \"dev\", \"test\" or \"all\"")
-    chosen = [c for c in cases if c.split == split]
+        chosen = [c for c in cases if c.split != "holdout"]
+    elif split in SPLITS:
+        chosen = [c for c in cases if c.split == split]
+    else:
+        raise DatasetError("split must be \"dev\", \"test\", \"holdout\" or \"all\" (all is dev and test)")
     if not chosen:
         raise DatasetError(f"no cases in the '{split}' split")
     return chosen

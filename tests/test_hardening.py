@@ -303,7 +303,7 @@ class RankSelectionTests(tcr.ProjectCase):
         self.run_target("old")
         self.write_cases(41)
         self.run_target("new")
-        self.assertEqual([s["reason"] for s in self.rank()["skipped"]], ["ran on a different version of the dataset file"])
+        self.assertEqual([s["reason"] for s in self.rank()["skipped"]], ["ran on a different version of the cases"])
 
     def test_ranking_follows_the_dataset_after_it_shrinks(self):
         # Seen before: after cases were removed, rank kept showing the runs on the old, bigger file.

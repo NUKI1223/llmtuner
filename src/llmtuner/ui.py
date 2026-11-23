@@ -42,7 +42,7 @@ MAX_CASE_ID = 1000
 MAX_GRADER = 1000
 MAX_NOTE = 10_000
 REQUEST_TIMEOUT = 10.0  # seconds a client may take to send a request; tests lower it
-SPLITS = ("test", "dev", "all")
+SPLITS = ("test", "dev", "holdout", "all")
 _ID = re.compile(r"[0-9]{1,18}")
 _PAGE = Path(__file__).with_name("ui_page.html")
 
@@ -215,8 +215,20 @@ def api_runs(store: Store, query: dict):
     return {"runs": rows, "project": project, "limit": limit}
 
 
+# The page does not know the project folder, so it cannot read the change log; say that, rather than
+# the report's "change log was not available", which would read as a fault.
+NOT_CHECKED = "changes to cases were not checked against the change log here (llmtuner report and compare do)"
+
+
+def _not_checked(comparison: dict | None) -> None:
+    if comparison:
+        comparison["warnings"] = [NOT_CHECKED if w == report.LOG_UNAVAILABLE else w for w in comparison["warnings"]]
+
+
 def api_report(store: Store, run_id: int, query: dict):
-    return report.build_report(store, run_id)
+    result = report.build_report(store, run_id)
+    _not_checked(result["baseline"])
+    return result
 
 
 def api_cases(store: Store, run_id: int, query: dict):
@@ -261,13 +273,15 @@ def api_cases(store: Store, run_id: int, query: dict):
 
 
 def api_compare(store: Store, query: dict):
-    return report.compare_runs(store, _query_int(query, "baseline"), _query_int(query, "candidate"))
+    result = report.compare_runs(store, _query_int(query, "baseline"), _query_int(query, "candidate"))
+    _not_checked(result)
+    return result
 
 
 def api_rank(store: Store, query: dict):
     split = _query_str(query, "split", "test")
     if split not in SPLITS:
-        raise BadRequest("split must be test, dev or all")
+        raise BadRequest("split must be test, dev, holdout or all")
     return report.rank(store, _query_str(query, "project"), _query_str(query, "dataset"), split)
 
 

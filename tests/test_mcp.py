@@ -100,10 +100,10 @@ class McpServerTests(unittest.TestCase):
     async def _round_trip(self):
         async with Client(self.params()) as client:
             names = {t.name for t in (await client.list_tools()).tools}
-            expected = {"describe_project", "run_eval", "get_report", "compare_runs",
+            expected = {"describe_project", "run_eval", "get_report", "compare_runs", "edit_case",
                         "check_gate", "list_runs", "show_cases"}
             self.assertTrue(expected <= names, names)
-            # Nothing that executes commands or writes ground truth is exposed.
+            # Nothing that executes commands or writes labels or baselines is exposed.
             self.assertEqual(names, expected)
 
             described = await client.call_tool("describe_project", {"project_dir": str(self.project)})

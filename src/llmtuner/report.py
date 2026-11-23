@@ -10,15 +10,18 @@ All functions return plain dicts so the CLI and the MCP server share them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import statistics
 
 from llmtuner import stats
+from llmtuner.changes import GUARDED_SPLITS, canonical
 from llmtuner.config import TARGET_GRADER
 from llmtuner.store import CASE_LABEL, Store
 
 # Cohen's kappa bars for trusting a grader (Landis & Koch style thresholds).
+LOG_UNAVAILABLE = "the change log was not available, so who changed these cases is unknown"
 KAPPA_GATE = 0.6
 KAPPA_UNSUPERVISED = 0.8
 MIN_LABELS = 20
@@ -57,6 +60,16 @@ def _case_counts(store: Store, run_id: int) -> dict[str, tuple[int, int]]:
             passes, trials = counts.get(case["case_id"], (0, 0))
             counts[case["case_id"]] = (passes + int(bool(case["passed"])), trials + 1)
     return counts
+
+
+def _digests(store: Store, run_id: int) -> dict[str, str]:
+    """case id -> a hash of what the run stored for the case: its input, expected and context. The
+    split is left out, so moving a case between splits does not make runs look different."""
+    out = {}
+    for case in store.get_cases(_first_run(store, run_id)["id"]):
+        form = [case["case_id"], _json_form(case["input"]), _json_form(case["expected"]), case["context"]]
+        out[case["case_id"]] = hashlib.sha256(json.dumps(form, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+    return out
 
 
 def _passed(store: Store, run_id: int) -> dict[str, bool]:
@@ -115,17 +128,194 @@ def trial_summary(store: Store, run_id: int) -> dict | None:
     }
 
 
-def compare_runs(store: Store, baseline_id: int, candidate_id: int) -> dict:
-    """Paired comparison of two runs on the cases they share."""
+def _cut(run: dict) -> bool:
+    """Whether a `limit` really left cases out of the run. A limit at or above the number of cases
+    the split had cut nothing; a run that did not record how many it could have run counts as cut."""
+    limit = run["case_limit"]
+    return limit is not None and (run.get("cases_selected") is None or limit < run["cases_selected"])
+
+
+def _first_run(store: Store, run_id: int) -> dict:
+    """The run whose stored cases stand for `run_id`: for a group of trials its first finished
+    trial (every trial ran the same data)."""
+    runs = _trial_runs(store, run_id)
+    return runs[0] if runs else store.group_runs(run_id)[0]
+
+
+def _json_form(text: str | None):
+    """A stored value in a form where equal JSON is equal, whatever the key order."""
+    if text is None:
+        return None
+    try:
+        return ("json", canonical(json.loads(text)))
+    except ValueError:
+        return ("text", text)
+
+
+def _case_fields(case: dict) -> dict:
+    return {"expected": _json_form(case["expected"]), "input": _json_form(case["input"]),
+            "context": case["context"], "split": case.get("split")}
+
+
+def _in_scope(case: dict, base: dict, cand: dict) -> bool:
+    """Whether the candidate's split should hold this baseline case at all, so that a dev case
+    absent from a test run is not called deleted."""
+    wanted = cand["split"]
+    if case.get("split") is None:  # an old row: go by what the run as a whole was
+        return base["split"] == wanted or wanted == "all"
+    return case["split"] in ("dev", "test") if wanted == "all" else case["split"] == wanted
+
+
+def _entry_form(field: str, value):
+    """A value from a log entry in the form `_case_fields` gives the stored value."""
+    if field in ("expected", "input"):
+        if field == "expected" and value is None:
+            return None
+        return _json_form(value if isinstance(value, str) and field == "input"
+                          else json.dumps(value, ensure_ascii=False))
+    return value
+
+
+def _status(known: bool, entries: list[dict], fields: list[str], new: dict | None, guarded: bool) -> str:
+    """Who is behind a change, from the log entries in the window.
+
+    Each changed field needs its last entry to end at the value the candidate run stored, and a
+    person's entry for a test or holdout case needs a reason; otherwise the change is "unrecorded".
+    """
+    if not known:
+        return "before_log"
+
+    def counts(e: dict) -> bool:
+        return e.get("by") == "agent" or not guarded or bool((e.get("reason") or "").strip())
+
+    if not entries or not any(counts(e) for e in entries):
+        return "unrecorded"
+    now = _case_fields(new) if new is not None else None
+    for field in fields:
+        touching = [e for e in entries if field in (e.get("after") or {})]
+        if not touching or not counts(touching[-1]):
+            return "unrecorded"
+        if now is not None and _entry_form(field, touching[-1]["after"][field]) != now[field]:
+            return "unrecorded"
+    return "agent" if any(e.get("by") == "agent" for e in entries) else "human"
+
+
+def case_changes(store: Store, base_id: int, cand_id: int, changes_log: list[dict] | None = None) -> list[dict]:
+    """The cases whose data changed between two runs, and who changed them.
+
+    "changed": the case is in both runs and its expected, input, context or split differs (JSON
+    compared by meaning). "missing": the baseline has it, the candidate lacks it although it ran
+    without a limit. A case only in the candidate is new, not a change.
+
+    `status`: "before_log" when the baseline was stored before runs recorded each case's split (the
+    log cannot speak for it); otherwise the change log decides, over the time between the two
+    runs: no entry is "unrecorded", any entry by an agent is "agent", else "human". Without a
+    log (`changes_log` None) every change of a recent run is "unrecorded".
+    """
+    base, cand = _first_run(store, base_id), _first_run(store, cand_id)
+    if (base["project"], base["dataset"]) != (cand["project"], cand["dataset"]):
+        return []
+    before = {c["case_id"]: c for c in store.get_cases(base["id"])}
+    after = {c["case_id"]: c for c in store.get_cases(cand["id"])}
+    window = [e for e in changes_log or [] if base["started_at"] <= e["ts"] <= cand["started_at"]]
+    changes = []
+    for case_id, old in before.items():
+        new = after.get(case_id)
+        entries = [e for e in window if e["case_id"] == case_id]
+        if new is None:
+            if _cut(cand) or cand["finished_at"] is None or not _in_scope(old, base, cand):
+                continue
+            kind, fields = "missing", []
+            moved = [e["after"]["split"] for e in entries if "split" in (e.get("after") or {})]
+            split_after = moved[-1] if moved else None
+            # The only logged way out of a split is a move. A deletion, a rename or a move whose
+            # last logged step keeps the case in this split has no entry behind it.
+            if old.get("split") is not None and (
+                    split_after is None or _in_scope({"split": split_after}, base, cand)):
+                changes.append({"case_id": case_id, "kind": kind, "fields": fields,
+                                "split_before": old.get("split"), "split_after": split_after,
+                                "status": "unrecorded", "entries": entries})
+                continue
+            checked = ["split"]  # the logged move must be the person's, with a reason
+        else:
+            was, now = _case_fields(old), _case_fields(new)
+            fields = [f for f in ("expected", "input", "context", "split")
+                      if was[f] != now[f] and (f != "split" or None not in (was[f], now[f]))]
+            if not fields:
+                continue
+            kind, split_after = "changed", new.get("split")
+            checked = fields
+        guarded = any(s in GUARDED_SPLITS for s in (old.get("split"), split_after))
+        status = _status(old.get("split") is not None, entries, checked, new, guarded)
+        changes.append({"case_id": case_id, "kind": kind, "fields": fields, "split_before": old.get("split"),
+                        "split_after": split_after, "status": status, "entries": entries})
+    # A case moved into this split since the baseline is only new to the candidate; the log shows it.
+    for case_id, new in after.items():
+        moves = [e for e in window if e["case_id"] == case_id and "split" in (e.get("after") or {})]
+        if case_id in before or not moves:
+            continue
+        changes.append({"case_id": case_id, "kind": "changed", "fields": ["split"],
+                        "split_before": moves[0]["before"].get("split"), "split_after": new.get("split"),
+                        "status": _status(True, moves, ["split"], new, True),
+                        "entries": [e for e in window if e["case_id"] == case_id]})
+    return changes
+
+
+def blocking_changes(changes: list[dict]) -> list[dict]:
+    """The changes that make a gate fail: a test or holdout case changed by an agent or
+    without a log entry. A change by a person with a reason is only shown; "before_log" never blocks."""
+    return [c for c in changes if c["status"] in ("agent", "unrecorded")
+            and any(s in GUARDED_SPLITS for s in (c["split_before"], c["split_after"]))]
+
+
+def blocking_reason(blocking: list[dict], baseline_id: int, run_id: int, hide: str | None = None) -> str:
+    """The gate's failure text. `hide` is for agents: "holdout" leaves out the ids of holdout cases,
+    "all" leaves out every id."""
+    shown = [c["case_id"] for c in blocking
+             if hide is None or (hide == "holdout" and "holdout" not in (c["split_before"], c["split_after"]))]
+    hidden = len(blocking) - len(shown)
+    listing = ", ".join(filter(None, [_ids(shown), f"{hidden} not named" if hidden else ""]))
+    return (f"{len(blocking)} test or holdout case(s) changed since baseline run {baseline_id} by an agent or"
+            f" without a change-log entry: {listing}. Review the change, then set a new baseline with"
+            f" `llmtuner baseline {run_id}`")
+
+
+def _splits(store: Store, run_id: int) -> dict[str, str | None]:
+    return {c["case_id"]: c["split"] for c in store.get_cases(_first_run(store, run_id)["id"])}
+
+
+def compare_runs(store: Store, baseline_id: int, candidate_id: int, changes_log: list[dict] | None = None,
+                 holdout_only: bool = False) -> dict:
+    """Paired comparison of two runs on the cases they share.
+
+    A case whose data changed between the runs (see `case_changes`) is left out of the statistics
+    and listed under "changed_cases". `changes_log` is the dataset's change log, or None when it
+    is not available.
+    """
     base, cand = store.get_run(baseline_id), store.get_run(candidate_id)
-    base_passed, cand_passed = _passed(store, baseline_id), _passed(store, candidate_id)
+    changes = case_changes(store, baseline_id, candidate_id, changes_log)
+    skip = {c["case_id"] for c in changes}
+    base_passed = {k: v for k, v in _passed(store, baseline_id).items() if k not in skip}
+    cand_passed = {k: v for k, v in _passed(store, candidate_id).items() if k not in skip}
+    if holdout_only:
+        # For agents: pair only cases stored as holdout in both runs, so an older run of the same
+        # cases from before they were moved into the holdout shows nothing about them.
+        a, b = _splits(store, baseline_id), _splits(store, candidate_id)
+        keep = {k for k in a if a[k] == "holdout" and b.get(k) == "holdout"}
+        base_passed = {k: v for k, v in base_passed.items() if k in keep}
+        cand_passed = {k: v for k, v in cand_passed.items() if k in keep}
     paired = stats.paired_compare(base_passed, cand_passed)
 
     warnings = []
     if (base["project"], base["dataset"]) != (cand["project"], cand["dataset"]):
         warnings.append("the runs are from different projects or datasets")
-    elif base["dataset_hash"] != cand["dataset_hash"]:
-        warnings.append("the dataset file changed between the two runs")
+    if changes:
+        warnings.append(f"{len(changes)} cases changed since the baseline run and were left out of the comparison")
+        if changes_log is None and any(c["status"] == "unrecorded" for c in changes):
+            warnings.append(LOG_UNAVAILABLE)
+    if _cut(cand):
+        warnings.append(f"the candidate ran on only {cand['case_limit']} of {cand['cases_selected'] or '?'} cases"
+                        " (limit)")
     if base["graders"] != cand["graders"]:
         warnings.append("the graders changed between the two runs")
     if paired.n < max(len(base_passed), len(cand_passed)):
@@ -152,7 +342,7 @@ def compare_runs(store: Store, baseline_id: int, candidate_id: int) -> dict:
                      "baseline_passes": before[case_id][0], "baseline_trials": before[case_id][1],
                      "candidate_passes": after[case_id][0], "candidate_trials": after[case_id][1],
                      "p_value": stats.fisher_exact(*before[case_id], *after[case_id])}
-                    for case_id in sorted(set(before) & set(after))]
+                    for case_id in sorted((set(before) & set(after)) - skip)]
 
     if paired.n == 0:
         verdict = "no shared cases"
@@ -173,6 +363,8 @@ def compare_runs(store: Store, baseline_id: int, candidate_id: int) -> dict:
         baseline_trials=base_trials,
         candidate_trials=cand_trials,
         per_case=per_case,
+        changed_cases=changes,
+        changes_log_available=changes_log is not None,
     )
     return result
 
@@ -250,7 +442,8 @@ def usage(cases: list[dict], n_passed: int) -> dict:
     }
 
 
-def build_report(store: Store, run_id: int) -> dict:
+def build_report(store: Store, run_id: int, changes_log: list[dict] | None = None,
+                 holdout_only: bool = False) -> dict:
     run = store.get_run(run_id)
     cases = store.get_cases(run_id)
     grades = store.get_grades(run_id)
@@ -274,7 +467,12 @@ def build_report(store: Store, run_id: int) -> dict:
     baseline_id = store.get_baseline(run["project"], run["dataset"])
     # Every trial of the baseline's group is the baseline, not something to compare with it.
     own_group = {r["id"] for r in store.group_runs(run_id)}
-    baseline = compare_runs(store, baseline_id, run_id) if baseline_id is not None and baseline_id not in own_group else None
+    baseline = (compare_runs(store, baseline_id, run_id, changes_log, holdout_only)
+                if baseline_id is not None and baseline_id not in own_group else None)
+    # What changed in the data since the previous run of this dataset and split, which the owner
+    # should see before reading any number.
+    previous = store.previous_finished_run(run["project"], run["dataset"], run["split"], min(own_group))
+    changed_since_previous = case_changes(store, previous, run_id, changes_log) if previous is not None else None
 
     group = trial_summary(store, run_id)
     describes = "this run" if group is None else (
@@ -300,6 +498,9 @@ def build_report(store: Store, run_id: int) -> dict:
         "baseline": baseline,
         # Set when this run is one of several repeated trials; everything above is this trial alone.
         "trials": group,
+        "previous_run": previous,
+        "changed_since_previous": changed_since_previous,
+        "changes_log_available": changes_log is not None,
     }
 
 
@@ -315,17 +516,18 @@ def rank(store: Store, project: str, dataset: str, split: str = "test") -> dict:
     # A group of repeated trials is one entry, represented by its first run.
     runs, incomplete, seen = [], [], set()
     for first in store.groups_without_finished_trial(project, dataset, split):
-        incomplete.append({**first, "trials": first["trials_planned"] or 1, "case_ids": frozenset()})
+        incomplete.append({**first, "trials": first["trials_planned"] or 1, "contents": {}, "case_ids": frozenset()})
     for run in store.finished_runs(project, dataset, split):  # newest first
         if run["trial_group"] is None:
-            runs.append({**run, "trials": 1})
+            runs.append({**run, "trials": 1, "contents": _digests(store, run["id"])})
             continue
         if run["trial_group"] in seen:
             continue
         seen.add(run["trial_group"])
         members = store.group_runs(run["id"])
         planned = members[0]["trials_planned"] or len(members)
-        entry = {**members[0], "trials": planned, "case_ids": frozenset(_passed(store, members[0]["id"]))}
+        entry = {**members[0], "trials": planned, "contents": _digests(store, members[0]["id"])}
+        entry["case_ids"] = frozenset(entry["contents"])
         if sum(1 for m in members if m["finished_at"] is not None) == planned:
             runs.append(entry)
         else:
@@ -335,14 +537,25 @@ def rank(store: Store, project: str, dataset: str, split: str = "test") -> dict:
                               "reason": "its repeated trials did not all finish"} for r in incomplete]
         return result
 
-    def group(run: dict):
-        return (run["dataset_hash"], json.dumps(run["graders"], sort_keys=True), run["trials"], run["case_ids"])
+    for run in runs:
+        run.setdefault("case_ids", frozenset(run["contents"]))
 
-    # The newest run says which dataset file, graders and number of trials are current, so
-    # editing the dataset moves the ranking on to the new file. Among runs on that setup the
-    # largest case set wins, so a quick --limit run does not hide a target's full run.
+    def group(run: dict):
+        return (json.dumps(run["graders"], sort_keys=True), run["trials"], frozenset(run["contents"].items()))
+
+    def same_cases(a: dict, b: dict) -> bool:
+        """The same data: shared cases hold the same content, and the case sets are equal unless one
+        run was cut short with --limit. A change anywhere else in the file does not matter."""
+        shared = a["case_ids"] & b["case_ids"]
+        if any(a["contents"][i] != b["contents"][i] for i in shared):
+            return False
+        return a["case_ids"] == b["case_ids"] or _cut(a) or _cut(b)
+
+    # The newest run says which cases, graders and number of trials are current, so editing the
+    # dataset moves the ranking on to the new data. Among runs on that setup the largest case
+    # set wins, so a quick --limit run does not hide a target's full run.
     current = runs[0]
-    same_setup = [r for r in runs if r["dataset_hash"] == current["dataset_hash"]
+    same_setup = [r for r in runs if same_cases(r, current)
                   and r["graders"] == current["graders"] and r["trials"] == current["trials"]]
     reference = max(same_setup, key=lambda r: (len(r["case_ids"]), r["id"]))
     ref_group = group(reference)
@@ -366,8 +579,8 @@ def rank(store: Store, project: str, dataset: str, split: str = "test") -> dict:
             continue
         if run in incomplete:
             reason = "its repeated trials did not all finish"
-        elif run["dataset_hash"] != reference["dataset_hash"]:
-            reason = "ran on a different version of the dataset file"
+        elif not same_cases(run, reference):
+            reason = "ran on a different version of the cases"
         elif run["graders"] != reference["graders"]:
             reason = "ran with different graders"
         elif run["trials"] != reference["trials"]:
@@ -405,14 +618,16 @@ def rank(store: Store, project: str, dataset: str, split: str = "test") -> dict:
     return result
 
 
-def gate(store: Store, run_id: int, baseline_id: int | None = None, max_drop: float = 0.03) -> dict:
-    """Fail when the pass rate fell more than `max_drop` below the baseline."""
+def gate(store: Store, run_id: int, baseline_id: int | None = None, max_drop: float = 0.03,
+         changes_log: list[dict] | None = None, holdout_only: bool = False) -> dict:
+    """Fail when the pass rate fell more than `max_drop` below the baseline, or when a test or
+    holdout case changed since the baseline by an agent or without a change-log entry."""
     run = store.get_run(run_id)
     if baseline_id is None:
         baseline_id = store.get_baseline(run["project"], run["dataset"])
     if baseline_id is None:
         return {"ok": False, "reason": "no baseline set for this project and dataset", "comparison": None}
-    comparison = compare_runs(store, baseline_id, run_id)
+    comparison = compare_runs(store, baseline_id, run_id, changes_log, holdout_only)
     # A group whose trials did not all finish is provisional: the gate never passes one.
     for side, side_id, what in (("candidate", run_id, "it"), ("baseline", baseline_id, "the candidate")):
         members = store.group_runs(side_id)
@@ -424,6 +639,16 @@ def gate(store: Store, run_id: int, baseline_id: int | None = None, max_drop: fl
             return {"ok": False, "note": None, "comparison": comparison,
                     "reason": f"the {side}'s repeated trials did not all finish ({finished} of {planned}),"
                               f" so the gate cannot pass {what}"}
+    cand_first = _first_run(store, run_id)
+    if _cut(cand_first):
+        return {"ok": False, "note": None, "comparison": comparison, "blocking_changes": [],
+                "reason": f"the candidate ran on only {cand_first['case_limit']} of"
+                          f" {cand_first['cases_selected'] or '?'} cases (limit); the gate needs a full run"}
+    blocking = blocking_changes(comparison["changed_cases"])
+    if blocking:
+        return {"ok": False, "note": None, "comparison": comparison,
+                "blocking_changes": [c["case_id"] for c in blocking],
+                "reason": blocking_reason(blocking, baseline_id, run_id)}
     if comparison["n"] == 0:
         return {"ok": False, "reason": "the run shares no cases with the baseline", "comparison": comparison}
     drop = -comparison["diff"]["point"]
@@ -440,7 +665,7 @@ def gate(store: Store, run_id: int, baseline_id: int | None = None, max_drop: fl
     elif floor > max_drop:
         note = (f"with {comparison['n']} cases, drops smaller than about {floor * 100:.0f} points"
                 " cannot be told from noise, so this gate only catches large regressions")
-    return {"ok": ok, "reason": reason, "note": note, "comparison": comparison}
+    return {"ok": ok, "reason": reason, "note": note, "comparison": comparison, "blocking_changes": []}
 
 
 # --- text formatting ---------------------------------------------------------
@@ -453,6 +678,30 @@ def _pct(value: float | None) -> str:
 def _ids(ids: list[str], limit: int = 8) -> str:
     shown = ", ".join(ids[:limit])
     return shown + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
+
+
+_STATUS_WORDS = {"human": "changed by a person, logged", "agent": "changed by an agent",
+                 "unrecorded": "changed with no change-log entry", "before_log": "before the change log"}
+
+
+def format_changes(changes: list[dict], log_available: bool = True, heading: str | None = None) -> list[str]:
+    """The block that lists changed cases: id, what changed, and who (or that nobody recorded it)."""
+    if not changes:
+        return []
+    lines = [heading or f"CHANGED CASES: {len(changes)} left out of the comparison"]
+    for c in changes:
+        what = "removed from the run" if c["kind"] == "missing" else "changed " + ", ".join(c["fields"])
+        before, after = c["split_before"] or "?", c["split_after"] or "?"
+        moved = (f" ({before} -> {after})" if before != after and c["split_after"] else f" ({before})")
+        lines.append(f"  {c['case_id']}{moved}: {what}; {_STATUS_WORDS[c['status']]}")
+        for e in c["entries"]:
+            basis = e.get("basis") or {}
+            why = e.get("reason") or "no reason given"
+            lines.append(f"      {e.get('at', '?')} by {e.get('by')} via {e.get('via')}: {why}"
+                         + (f" [basis: {basis.get('kind')}: {basis.get('ref') or basis.get('quote')}]" if basis else ""))
+    if not log_available:
+        lines.append("  (the change log was not available, so nobody could be named)")
+    return lines
 
 
 def _header(run: dict, n: int) -> list[str]:
@@ -558,6 +807,7 @@ def format_compare(cmp: dict) -> str:
         lines.append(f"  {len(changed)} of {len(cmp['per_case'])} cases changed with p < 0.05."
                      " Testing many cases one by one, about 1 in 20 crosses 0.05 by chance.")
     lines += [f"  warning: {w}" for w in cmp["warnings"]]
+    lines += format_changes(cmp.get("changed_cases") or [], cmp.get("changes_log_available", True))
     return "\n".join(lines)
 
 
@@ -603,6 +853,12 @@ def format_report(report: dict) -> str:
     if trials:
         lines.insert(1, f"  repeated trials: runs {_ids([str(i) for i in trials['runs']], 12)}"
                         f" ({trials['finished']} of {trials['planned']} finished)")
+    changed = report.get("changed_since_previous")
+    if changed:
+        lines += [""] + format_changes(
+            changed, report.get("changes_log_available", True),
+            f"CHANGED SINCE RUN {report['previous_run']}: {len(changed)} case(s) differ from the previous run"
+            f" of this dataset and split")
     lines.append("")
     if trials and trials["finished"] == 0:  # nothing to report, even if an unfinished trial recorded cases
         return "\n".join(lines + _trial_lines(trials))
@@ -679,4 +935,7 @@ def format_gate(result: dict) -> str:
         lines += [f"warning: {w}" for w in result["comparison"]["warnings"]]
     if result["comparison"] and result["comparison"]["regressions"]:
         lines.append("got worse: " + _ids(result["comparison"]["regressions"], 12))
+    if result["comparison"]:
+        lines += format_changes(result["comparison"].get("changed_cases") or [],
+                                result["comparison"].get("changes_log_available", True))
     return "\n".join(lines)

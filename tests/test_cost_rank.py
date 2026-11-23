@@ -398,7 +398,7 @@ class RankTests(ProjectCase):
         result = self.rank()
         self.assertEqual({r["target"] for r in result["rows"]}, {"a", "b"})
         self.assertEqual([(s["target"], s["reason"]) for s in result["skipped"]],
-                         [("old", "ran on a different version of the dataset file")])
+                         [("old", "ran on a different version of the cases")])
         self.assertIn("skipped run", report.format_rank(result))
 
     def test_different_graders_are_skipped(self):

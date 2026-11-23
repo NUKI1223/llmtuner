@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import random
 import sys
 import time
 
-from llmtuner import __version__, report
+from llmtuner import __version__, changes, report
 from llmtuner.config import ConfigError, load_config
-from llmtuner.dataset import DatasetError
+from llmtuner.dataset import SPLITS, DatasetError, load_cases
 from llmtuner.runner import run_eval
 from llmtuner.store import CASE_LABEL, Store, StoreError
 
@@ -30,6 +31,22 @@ def _resolve_run(store: Store, args) -> int:
     except ConfigError:
         project = None
     return store.latest_run_id(project)
+
+
+def _changes_log(args, store: Store, run_id: int) -> list[dict] | None:
+    """The change log of the dataset a run belongs to, found through the project config in
+    this folder (or --config). None when this config does not describe that run's project."""
+    try:
+        config = load_config(args.config)
+    except ConfigError:
+        return None
+    run = store.get_run(run_id)
+    log = changes.log_for_run(config, run)
+    if log is not None:
+        skipped = changes.read_log_with_skipped(config.dataset(run["dataset"]).changes)[1]
+        if skipped:
+            print(f"warning: {skipped} malformed line(s) in the change log were skipped", file=sys.stderr)
+    return log
 
 
 def _clip(text: str | None, limit: int = _SHOW_CHARS) -> str:
@@ -57,7 +74,8 @@ def cmd_info(args, store: Store) -> int:
     lines += [f"  {t.name:<16} {' '.join(t.command)}" for t in config.targets.values()]
     lines.append("datasets")
     for d in config.datasets.values():
-        lines.append(f"  {d.name:<16} {d.path.name}  graders: {', '.join(g.name for g in config.graders_for(d))}")
+        lines.append(f"  {d.name:<16} {d.path.name}  graders: {', '.join(g.name for g in config.graders_for(d))}"
+                     f"  changes: {d.changes.name}")
     _emit(args, data, "\n".join(lines))
     return 0
 
@@ -75,30 +93,32 @@ def cmd_run(args, store: Store) -> int:
 
     run_id = run_eval(config, store, args.target, args.dataset, split=args.split, note=args.note,
                       jobs=args.jobs, limit=args.limit, on_case=progress, trials=args.trials,
-                      on_trial=next_trial)
+                      on_trial=next_trial, origin="cli")
     if not args.json:
         print(file=sys.stderr)
     if args.set_baseline:
         store.set_baseline(run_id)
-    result = report.build_report(store, run_id)
+    result = report.build_report(store, run_id, _changes_log(args, store, run_id))
     _emit(args, result, report.format_report(result))
     return 0
 
 
 def cmd_report(args, store: Store) -> int:
-    result = report.build_report(store, _resolve_run(store, args))
+    run_id = _resolve_run(store, args)
+    result = report.build_report(store, run_id, _changes_log(args, store, run_id))
     _emit(args, result, report.format_report(result))
     return 0
 
 
 def cmd_compare(args, store: Store) -> int:
-    result = report.compare_runs(store, args.baseline, args.candidate)
+    result = report.compare_runs(store, args.baseline, args.candidate, _changes_log(args, store, args.candidate))
     _emit(args, result, report.format_compare(result))
     return 0
 
 
 def cmd_gate(args, store: Store) -> int:
-    result = report.gate(store, _resolve_run(store, args), args.baseline, args.max_drop)
+    run_id = _resolve_run(store, args)
+    result = report.gate(store, run_id, args.baseline, args.max_drop, _changes_log(args, store, run_id))
     _emit(args, result, report.format_gate(result))
     return 0 if result["ok"] else 1
 
@@ -135,7 +155,7 @@ def cmd_runs(args, store: Store) -> int:
         # Repeated trials are ordinary runs; say which trial each one is.
         trial = f"  trial {r['trial']}/{r['trials_planned']} of group {r['trial_group']}" if r["trial_group"] else ""
         lines.append(f"{r['id']:>4}  {when}  {r['project']:<18} {r['dataset']:<14} {r['target']:<16}"
-                     f" {r['split']:<5} {rate:>8}{state}{trial}" + (f"  {r['note']}" if r["note"] else ""))
+                     f" {r['split']:<7} {rate:>8}{state}{trial}" + (f"  {r['note']}" if r["note"] else ""))
     _emit(args, runs, "\n".join(lines) or "no runs recorded yet")
     return 0
 
@@ -233,6 +253,116 @@ def cmd_rank(args, store: Store) -> int:
     return 0
 
 
+def _show_value(value) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return json.dumps(_clip(text, 200), ensure_ascii=False)
+
+
+def _seen_outside_holdout(store: Store, config, dataset) -> set[str]:
+    """Case ids already stored in a run outside holdout, under any dataset name that reads this file."""
+    seen: set[str] = set()
+    for other in config.datasets.values():
+        if other.path == dataset.path:
+            seen |= store.case_ids_seen_outside_holdout(config.project, other.name)
+    return seen
+
+
+def cmd_case_edit(args, store: Store) -> int:
+    config = load_config(args.config)
+    fields = {}
+    for name, text, as_json in (("expected", args.expected, False), ("expected", args.expected_json, True),
+                                ("input", args.input, False), ("input", args.input_json, True)):
+        if text is None:
+            continue
+        try:
+            fields[name] = json.loads(text) if as_json else text
+        except ValueError as exc:
+            raise ConfigError(f"--{name}-json is not valid JSON ({exc})") from exc
+    if args.context is not None:
+        fields["context"] = args.context
+    if args.split is not None:
+        fields["split"] = args.split
+    if not fields:
+        raise ConfigError("nothing to change: give --expected, --input, --context or --split")
+    basis = None
+    if args.basis_rule is not None:
+        basis = {"kind": "rule", "ref": args.basis_rule}
+    elif args.basis_owner is not None:
+        basis = {"kind": "owner", "quote": args.basis_owner}
+    by, signal = changes.who_is_editing(args.by, "cli")
+    if fields.get("split") == "holdout" and args.case_id in _seen_outside_holdout(
+            store, config, config.dataset(args.dataset)):
+        print(f"warning: case {args.case_id} was already in a run outside holdout, so an agent may have"
+              " read its input and output there; holdout works best with cases never run", file=sys.stderr)
+    entry = changes.edit_case(config, args.dataset, args.case_id, reason=args.reason, basis=basis,
+                              by=by, via="cli", signal=signal, **fields)
+    lines = [f"case {args.case_id} of {args.dataset} changed, recorded as {by}"
+             + (f" ({signal})" if signal else "")]
+    lines += [f"  {k}: {_show_value(entry['before'][k])} -> {_show_value(entry['after'][k])}" for k in entry["before"]]
+    lines.append(f"  logged in {config.dataset(args.dataset).changes}")
+    _emit(args, entry, "\n".join(lines))
+    return 0
+
+
+def _fraction(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not value >= 0 or value == float("inf"):
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return value
+
+
+def cmd_split(args, store: Store) -> int:
+    config = load_config(args.config)
+    dataset = config.dataset(args.dataset)
+    if args.apply and changes.who_is_editing(None, "cli")[0] == "agent":
+        raise changes.ChangeError(f"an agent cannot apply a split (detected: {changes.who_is_editing(None, 'cli')[1]});"
+                                  " a person runs `llmtuner split --apply` in their own shell")
+    # --apply reads, proposes and writes under one lock, so no other edit slips in between.
+    with changes.dataset_lock(dataset) if args.apply else contextlib.nullcontext():
+        return _split(args, config, dataset, store)
+
+
+def _split(args, config, dataset, store: Store) -> int:
+    cases, _ = load_cases(dataset.path)
+    seed = args.seed if args.seed is not None else random.SystemRandom().randrange(2**31)
+    fractions = {"dev": args.dev, "test": args.test, "holdout": args.holdout}
+    # A case already shown in a run outside holdout may have been read there, so it is not hidden.
+    seen = _seen_outside_holdout(store, config, dataset)
+    proposal = changes.propose_split([c.id for c in cases], fractions, seed, seen)
+    todo = [(c, proposal[c.id]) for c in cases if proposal[c.id] != c.split]
+    counts = {s: sum(1 for p in proposal.values() if p == s) for s in SPLITS}
+    lines = [f"proposed split of {args.dataset} (seed {seed}): "
+             + ", ".join(f"{s} {counts[s]}" for s in SPLITS)]
+    wanted = changes.split_counts(len(cases), fractions)["holdout"]
+    if counts["holdout"] < wanted:
+        lines.append(f"holdout gets {counts['holdout']} of the {wanted} cases asked for: only cases that"
+                     " were never in a run outside holdout can be hidden; add new cases for the rest")
+    lines += [f"  {c.id:<28} {c.split:>7} -> {proposal[c.id]:<7}" + ("  changes" if proposal[c.id] != c.split else "")
+              for c in cases]
+    lines.append(f"{len(todo)} of {len(cases)} cases would change.")
+    data = {"dataset": args.dataset, "seed": seed, "counts": counts, "holdout_asked": wanted, "applied": False,
+            "cases": [{"case_id": c.id, "current": c.split, "proposed": proposal[c.id]} for c in cases]}
+    if not args.apply:
+        lines.append(f"Nothing was written. To apply: llmtuner split {args.dataset} --seed {seed} --apply"
+                     " (add the same fractions if you changed them)")
+        _emit(args, data, "\n".join(lines))
+        return 0
+    by, signal = changes.who_is_editing(None, "cli")
+    if by == "agent":
+        raise changes.ChangeError(f"an agent cannot apply a split (detected: {signal}); a person runs"
+                                  " `llmtuner split --apply` in their own shell")
+    for case, new_split in todo:
+        changes.edit_case(config, args.dataset, case.id, split=new_split, by="human", via="cli", signal=None,
+                          reason=f"llmtuner split --seed {seed}")
+    data["applied"] = True
+    lines.append(f"Applied {len(todo)} changes; each is in {dataset.changes}.")
+    _emit(args, data, "\n".join(lines))
+    return 0
+
+
 def cmd_ui(args, store: Store) -> int:
     from llmtuner import ui
 
@@ -269,8 +399,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("run", cmd_run, "Run a target on a dataset, grade every output and store the result.")
     p.add_argument("target")
     p.add_argument("dataset")
-    p.add_argument("--split", choices=("test", "dev", "all"), default="test",
-                   help="which cases to run (default: test; tune on dev, report on test)")
+    p.add_argument("--split", choices=(*SPLITS, "all"), default="test",
+                   help="which cases to run (default: test; tune on dev, report on test, check once on"
+                        " holdout). all is dev and test, never holdout")
     p.add_argument("--note", help="a short note stored with the run, e.g. what changed")
     p.add_argument("--jobs", type=_positive_int, default=1, help="cases to run at the same time (default: 1)")
     p.add_argument("--limit", type=_positive_int, help="run only the first N cases")
@@ -318,7 +449,41 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("rank", cmd_rank, "Rank this project's targets on a dataset by pass rate and cost per passed case.")
     p.add_argument("dataset")
     p.add_argument("--project", help="project name (default: this folder's project)")
-    p.add_argument("--split", choices=("test", "dev", "all"), default="test")
+    p.add_argument("--split", choices=(*SPLITS, "all"), default="test")
+
+    case = sub.add_parser("case", help="Change a case of a dataset, with a log entry.")
+    case_sub = case.add_subparsers(dest="case_command", required=True)
+    p = case_sub.add_parser("edit", parents=[common], help="Edit one case and record who and why.",
+                            description="Edit one case in the dataset file. Only that line changes, and an entry"
+                                        " goes into the dataset's change log. A reason is required for test and"
+                                        " holdout cases; an agent also needs a basis.")
+    p.set_defaults(func=cmd_case_edit)
+    p.add_argument("dataset")
+    p.add_argument("case_id")
+    expected = p.add_mutually_exclusive_group()
+    expected.add_argument("--expected", metavar="TEXT", help="new expected value, as a plain string")
+    expected.add_argument("--expected-json", metavar="JSON", help="new expected value, as JSON (object, list, null...)")
+    given = p.add_mutually_exclusive_group()
+    given.add_argument("--input", metavar="TEXT", help="new input, as a plain string")
+    given.add_argument("--input-json", metavar="JSON", help="new input, as JSON")
+    p.add_argument("--context", metavar="TEXT")
+    p.add_argument("--split", choices=SPLITS)
+    p.add_argument("--reason", help="why (required for test and holdout cases)")
+    basis = p.add_mutually_exclusive_group()
+    basis.add_argument("--basis-rule", metavar="REF", help="agents: the rule or file the change follows")
+    basis.add_argument("--basis-owner", metavar="QUOTE", help="agents: the owner's words, verbatim")
+    p.add_argument("--by", choices=("human", "agent"),
+                   help="who is editing; an agent's own environment (CLAUDECODE, AI_AGENT) is detected and"
+                        " cannot be set to human")
+
+    p = add("split", cmd_split, "Propose a random dev / test / holdout division of a dataset.")
+    p.add_argument("dataset")
+    p.add_argument("--dev", type=_fraction, default=0.5, help="share for dev (default: 0.5)")
+    p.add_argument("--test", type=_fraction, default=0.3, help="share for test (default: 0.3)")
+    p.add_argument("--holdout", type=_fraction, default=0.2, help="share for holdout (default: 0.2)")
+    p.add_argument("--seed", type=int, help="random seed (default: a random one, always printed)")
+    p.add_argument("--apply", action="store_true",
+                   help="write the division to the dataset file, with log entries (people only; without it nothing is written)")
 
     p = add("ui", cmd_ui, "Open the local web page for browsing runs and labelling outputs.")
     p.add_argument("--port", type=_port, default=8765, help="port on 127.0.0.1 (default: 8765; 0 picks a free one)")

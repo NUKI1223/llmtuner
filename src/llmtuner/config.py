@@ -65,6 +65,12 @@ class Dataset:
     name: str
     path: Path
     graders: tuple[str, ...] | None = None  # None means every grader in the config
+    # The change log of this dataset's cases; defaults to the dataset path with `.changes.jsonl`.
+    changes: Path | None = None
+
+    def __post_init__(self) -> None:
+        if self.changes is None:
+            object.__setattr__(self, "changes", self.path.with_suffix(".changes.jsonl"))
 
 
 @dataclass(frozen=True)
@@ -94,7 +100,7 @@ class Config:
                 for t in self.targets.values()
             },
             "datasets": {
-                d.name: {"path": str(d.path), "graders": [g.name for g in self.graders_for(d)]}
+                d.name: {"path": str(d.path), "changes": str(d.changes), "graders": [g.name for g in self.graders_for(d)]}
                 for d in self.datasets.values()
             },
             "graders": [g.describe() for g in self.graders.values()],
@@ -232,6 +238,25 @@ def load_config(path: str | Path | None = None) -> Config:
             if missing:
                 raise ConfigError(f"{where}: unknown grader(s): {', '.join(missing)}")
             chosen = tuple(chosen)
-        datasets[name] = Dataset(name=name, path=(root / body["path"]).resolve(), graders=chosen)
+        changes = body.get("changes")
+        if changes is not None and (not isinstance(changes, str) or not changes):
+            raise ConfigError(f"{where}: changes must be a file path like \"artifacts/changes.jsonl\"")
+        path = (root / body["path"]).resolve()
+        changes_path = (root / changes).resolve() if changes is not None else None
+        if changes_path == path:
+            raise ConfigError(f"{where}: changes must not be the dataset file itself")
+        datasets[name] = Dataset(name=name, path=path, graders=chosen, changes=changes_path)
+
+    # Edits lock on the change log, so datasets that read one file must share one log.
+    logs: dict[Path, Dataset] = {}
+    files = {d.path: d for d in datasets.values()}
+    for d in datasets.values():
+        if d.changes in files:
+            raise ConfigError(f"[datasets.{d.name}]: changes points at the file of [datasets.{files[d.changes].name}];"
+                              " a change log must be a file of its own")
+        first = logs.setdefault(d.path, d)
+        if first.changes != d.changes:
+            raise ConfigError(f"[datasets.{d.name}]: reads the same file as [datasets.{first.name}]"
+                              " but keeps a different change log; give both the same `changes`")
 
     return Config(project=project.strip(), root=root, targets=targets, datasets=datasets, graders=graders)
